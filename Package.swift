@@ -8,7 +8,9 @@ let package = Package(
   platforms: [.macOS(.v10_15), .iOS(.v13), .tvOS(.v13), .macCatalyst(.v13)],
   products: [
     .executable(name: "swift-bundler", targets: ["swift-bundler"]),
+    .executable(name: "xclaude", targets: ["xclaude"]),
     .library(name: "SwiftBundler", targets: ["SwiftBundler"]),
+    .library(name: "XClaudeCore", targets: ["XClaudeCore"]),
     .library(name: "SwiftBundlerRuntime", targets: ["SwiftBundlerRuntime"]),
     .library(name: "SwiftBundlerBuilders", targets: ["SwiftBundlerBuilders"]),
     .plugin(name: "SwiftBundlerCommandPlugin", targets: ["SwiftBundlerCommandPlugin"]),
@@ -208,6 +210,27 @@ let package = Package(
       ),
       dependencies: [
         .target(name: "swift-bundler")
+      ]
+    ),
+
+    // xclaude MCP server
+    .executableTarget(
+      name: "xclaude",
+      dependencies: ["XClaudeCore"],
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableUpcomingFeature("FullTypedThrows"),
+      ]
+    ),
+    .target(
+      name: "XClaudeCore",
+      dependencies: [
+        "TOMLKit",
+        .product(name: "Logging", package: "swift-log"),
+      ],
+      swiftSettings: [
+        .swiftLanguageMode(.v5),
+        .enableUpcomingFeature("FullTypedThrows"),
       ]
     ),
   ]

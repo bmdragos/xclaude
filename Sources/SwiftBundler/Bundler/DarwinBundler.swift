@@ -152,7 +152,21 @@ enum DarwinBundler: Bundler {
   ) async throws(Error) {
     if let path = context.appConfiguration.icon {
       let icon = context.packageDirectory / path
-      try await Self.compileAppIcon(at: icon, to: bundleStructure.appIconFile)
+
+      switch additionalContext.platform.os {
+        case .macOS:
+          // macOS uses .icns files
+          try await Self.compileAppIcon(at: icon, to: bundleStructure.appIconFile)
+        case .iOS, .tvOS, .visionOS:
+          // iOS/tvOS/visionOS use asset catalogs compiled with actool
+          try await Self.compileAppIconForNonMac(
+            at: icon,
+            to: bundleStructure.resourcesDirectory,
+            infoPlistFile: bundleStructure.infoPlistFile,
+            platform: additionalContext.platform.platform,
+            platformVersion: additionalContext.platformVersion
+          )
+      }
     }
 
     do {
@@ -372,6 +386,114 @@ enum DarwinBundler: Bundler {
     } else {
       throw Error(.invalidAppIconFile(inputIconFile))
     }
+  }
+
+  /// Compiles an app icon for iOS/tvOS/visionOS by creating an asset catalog and
+  /// running actool with the appropriate flags.
+  /// - Parameters:
+  ///   - inputIconFile: The app's icon. Must be a 1024x1024 PNG.
+  ///   - resourcesDirectory: The bundle's resources directory.
+  ///   - infoPlistFile: The app's Info.plist file (will be updated with icon info).
+  ///   - platform: The target platform.
+  ///   - platformVersion: The minimum platform version.
+  private static func compileAppIconForNonMac(
+    at inputIconFile: URL,
+    to resourcesDirectory: URL,
+    infoPlistFile: URL,
+    platform: Platform,
+    platformVersion: String
+  ) async throws(Error) {
+    guard inputIconFile.pathExtension.lowercased() == "png" else {
+      throw Error(.invalidAppIconFile(inputIconFile))
+    }
+
+    log.info("Creating iOS app icon from '\(inputIconFile.lastPathComponent)'")
+
+    // Create temporary asset catalog
+    let tempDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("swift-bundler-icon-\(UUID().uuidString)")
+    let assetCatalog = tempDir.appendingPathComponent("Assets.xcassets")
+    let appIconSet = assetCatalog.appendingPathComponent("AppIcon.appiconset")
+
+    do {
+      try FileManager.default.createDirectory(
+        at: appIconSet,
+        withIntermediateDirectories: true
+      )
+    } catch {
+      throw Error(.failedToCreateIcon, cause: error)
+    }
+
+    // Copy icon to asset catalog
+    let iconDest = appIconSet.appendingPathComponent("icon_1024x1024.png")
+    do {
+      try FileManager.default.copyItem(at: inputIconFile, to: iconDest)
+    } catch {
+      throw Error(.failedToCreateIcon, cause: error)
+    }
+
+    // Create Contents.json for the app icon set
+    // Using the modern single-size format that works for iOS 12+
+    let contentsJson = """
+      {
+        "images" : [
+          {
+            "filename" : "icon_1024x1024.png",
+            "idiom" : "universal",
+            "platform" : "ios",
+            "size" : "1024x1024"
+          }
+        ],
+        "info" : {
+          "author" : "xcode",
+          "version" : 1
+        }
+      }
+      """
+    do {
+      try contentsJson.write(
+        to: appIconSet.appendingPathComponent("Contents.json"),
+        atomically: true,
+        encoding: .utf8
+      )
+    } catch {
+      throw Error(.failedToCreateIcon, cause: error)
+    }
+
+    // Compile with actool, including --app-icon flag for iOS
+    let partialPlistPath = tempDir.appendingPathComponent("assetcatalog_generated_info.plist")
+
+    do {
+      try await Process.create(
+        "/usr/bin/xcrun",
+        arguments: [
+          "actool", assetCatalog.path,
+          "--compile", resourcesDirectory.path,
+          "--platform", platform.sdkName,
+          "--minimum-deployment-target", platformVersion,
+          "--app-icon", "AppIcon",
+          "--output-partial-info-plist", partialPlistPath.path,
+        ]
+      ).runAndWait()
+    } catch {
+      throw Error(.failedToCreateIcon, cause: error)
+    }
+
+    // Merge partial plist into Info.plist to add CFBundleIcons
+    do {
+      try await Process.create(
+        "/usr/libexec/PlistBuddy",
+        arguments: [
+          "-c", "Merge \(partialPlistPath.path)",
+          infoPlistFile.path,
+        ]
+      ).runAndWait()
+    } catch {
+      throw Error(.failedToCreateIcon, cause: error)
+    }
+
+    // Cleanup temp directory
+    try? FileManager.default.removeItem(at: tempDir)
   }
 
   private static func embedProvisioningProfile(

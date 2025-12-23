@@ -1,89 +1,206 @@
-<p align="center">
-  <img width="100%" src="banner.png">
-</p>
+# xclaude
 
-<p align="center">
-  <a href="https://swiftpackageindex.com/stackotter/swift-bundler"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fstackotter%2Fswift-bundler%2Fbadge%3Ftype%3Dswift-versions"></a>
-  <a href="https://github.com/stackotter/swift-bundler/actions/workflows/swift-macos.yml" alt="Build macOS"><img src="https://github.com/stackotter/swift-bundler/actions/workflows/swift-macos.yml/badge.svg"></a>
-  <a href="https://github.com/stackotter/swift-bundler/actions/workflows/swift-linux.yml" alt="Build Linux"><img src="https://github.com/stackotter/swift-bundler/actions/workflows/swift-linux.yml/badge.svg"></a>
-  <a href="https://github.com/stackotter/swift-bundler/actions/workflows/swift-windows.yml" alt="Build Linux"><img src="https://github.com/stackotter/swift-bundler/actions/workflows/swift-windows.yml/badge.svg"></a>
-  <a href="https://discord.gg/6mUFu3KtAn"><img src="https://img.shields.io/discord/949626773295988746?color=6A7EC2&label=discord&logo=discord&logoColor=ffffff"></a> 
-</p>
+**Terraform for Apple development.** An MCP server that lets Claude Code build, sign, and deploy iOS/macOS/visionOS apps without Xcode project files.
 
-<p align="center">
-  An Xcodeproj-less tool for creating cross-platform Swift apps.
-</p>
+## What is this?
 
-## Supporting Swift Bundler ❤️
+xclaude is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that gives Claude Code the ability to:
 
-If you find Swift Bundler useful, please consider supporting me by [becoming a sponsor](https://github.com/sponsors/stackotter). I spend most of my spare time working on open-source projects, and each sponsorship helps me focus more time on making high quality tools for the community.
+- Create iOS/macOS apps from scratch
+- Build and deploy to simulators and physical devices
+- Automatically discover and configure code signing
+- Run tests, capture screenshots, read logs
+- Generate SwiftData models, widgets, and API clients
+- Archive and upload to the App Store
 
-## Documentation 📚
+All without ever opening Xcode or creating an `.xcodeproj` file.
 
-The documentation is hosted on [the Swift Bundler website](https://swiftbundler.dev/documentation/swift-bundler).
+## Installation
 
-## Installation 📦
+### Build from source
 
-Install the latest version of Swift Bundler with [mint](https://github.com/yonaskolb/Mint):
-
-```sh
-mint install stackotter/swift-bundler@main
+```bash
+git clone https://github.com/yourusername/xclaude.git
+cd xclaude
+swift build -c release
 ```
 
-See [Runtime dependencies](https://swiftbundler.dev/documentation/swift-bundler/installation#Runtime-dependencies) for a list of runtime dependencies and associated installation instructions.
+The binary will be at `.build/release/xclaude`.
 
-If you have previously installed Swift Bundler via the installation script you must delete the `/opt/swift-bundler` directory (requires sudo).
+### Add to Claude Code
 
-For more installation methods, see [the documentation](https://swiftbundler.dev/documentation/swift-bundler/installation).
+Add to your Claude Code MCP settings (`~/.claude/settings.json` or project `.claude/settings.json`):
 
-## Getting started 🚦
-
-After installing Swift Bundler, package templates make it quick to get started. The following sections walk you through creating and running a simple 'Hello, World!' SwiftUI app.
-
-### Creating a SwiftUI app
-
-```sh
-# Create a new app from the SwiftUI template.
-swift bundler create HelloWorld --template SwiftUI
-cd HelloWorld
+```json
+{
+  "mcpServers": {
+    "xclaude": {
+      "command": "/path/to/xclaude"
+    }
+  }
+}
 ```
 
-### Running the app
+Or use the build directory directly:
 
-```sh
-# Build and run the app.
-swift bundler run
+```json
+{
+  "mcpServers": {
+    "xclaude": {
+      "command": "/Users/you/xclaude/.build/release/xclaude"
+    }
+  }
+}
 ```
 
-### Using Xcode as your IDE
+Restart Claude Code to load the MCP server.
 
-```sh
-# Creates the files necessary to get xcode to run the package as an app.
-# Only needs to be run once unless you delete the `.swiftpm` directory.
-swift bundler generate-xcode-support
+## Quick Start
 
-# Open the package in Xcode
-open Package.swift
+Once configured, just ask Claude:
+
+> "Create a new iOS app called TaskMaster"
+
+Claude will use xclaude to:
+1. Create the project structure
+2. Generate `Package.swift` and `xclaude.toml`
+3. Scaffold SwiftUI app code
+4. Build and deploy to the simulator
+
+### Project Structure
+
+xclaude uses conventions:
+
+```
+MyApp/
+├── xclaude.toml          # Simple config (the only config you need)
+├── icon.png              # 1024x1024 app icon
+├── Package.swift         # Swift Package Manager manifest
+├── Sources/MyApp/
+│   ├── MyAppApp.swift    # @main entry point
+│   └── ContentView.swift
+└── .xclaude/             # Generated (gitignored)
+    └── derived/          # Bundler.toml, entitlements, etc.
 ```
 
-### Learning more
+### Configuration
 
-To learn more about Swift Bundler refer to the [documentation](https://swiftbundler.dev/documentation/swift-bundler).
+`xclaude.toml` is intentionally minimal:
 
-## Contributing 🛠
+```toml
+[app]
+name = "MyApp"
+# bundle_id = "com.company.myapp"  # Optional, derived from name
+# version = "1.0.0"                # Optional, defaults to 1.0.0
 
-Contributions of all kinds are very welcome! Just make sure to check out [the contributing guidelines](CONTRIBUTING.md) before getting started. Read through [the open issues](https://github.com/stackotter/swift-bundler/issues) for contribution ideas.
+[signing]
+# team = "ABC123XYZ"               # Optional, auto-discovered
+# identity = "Apple Development"   # Optional, auto-discovered
+# profile = "iOS Team Provisioning" # Optional, auto-discovered
+```
 
-## Bug response policy 🐞
+Most projects only need the app name. Everything else is auto-discovered.
 
-*Critical bugs will be addressed within 48 hours or less*. Critical bugs are classified as any bugs that risk loss of user/developer data or represent critical security vulnerabilities (around 8 or above on the CVSS scale as a rule of thumb, although Swift Bundler maintainers retain discretion).
+## Features
 
-Non-critical bugs will be addressed in order of priority with no strict turnaround commitments. As a general rule of thumb, we'll address security vulnerabilities, then bugs reported by sponsors, then any other bugs as time permits.
+### 30 MCP Tools
 
-## Apps made with Swift Bundler 👨‍💻
+| Category | Tools |
+|----------|-------|
+| **Project** | `create_project`, `init_project`, `get_config`, `update_config` |
+| **Signing** | `discover_signing`, `get_signing_status`, `configure_signing` |
+| **Build** | `build`, `deploy`, `run`, `watch`, `stop_watch` |
+| **Devices** | `list_simulators`, `list_devices`, `reset_simulator` |
+| **Debug** | `screenshot`, `get_logs`, `get_crash_logs`, `diagnose` |
+| **Test** | `test` |
+| **Dependencies** | `add_dependency` |
+| **Capabilities** | `add_capability`, `list_capabilities` |
+| **Distribution** | `archive`, `validate`, `upload` |
+| **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
 
-If you have made an app with Swift Bundler, I'd love to hear about it! Just open an issue or submit a PR to add it to the list.
+### Example Workflows
 
-- [Delta Client](https://github.com/stackotter/delta-client): A 'Minecraft: Java Edition' compatible Minecraft client written from scratch in Swift (macOS only)
-- [ModularMTL](https://github.com/JezewskiG/ModularMTL): A modular multiplication visualisation made with Swift Bundler, SwiftUI and Metal (macOS only)
-- [Friend](https://github.com/JoshuaBrest/Friend): A technical demo that showcases how system-based assistants can be integrated with LLMs to provide greater flexibility and functionality (macOS only)
+**Create and run a new app:**
+> "Create an iOS app called WeatherApp and run it on the simulator"
+
+**Add a SwiftData model:**
+> "Add a SwiftData model called Task with properties: id (UUID), title (String), isComplete (Bool), dueDate (Date?)"
+
+**Add a widget:**
+> "Add a widget extension to my app"
+
+**Deploy to physical device:**
+> "Build and deploy to my iPhone"
+
+**Prepare for App Store:**
+> "Archive my app for App Store submission"
+
+**Debug issues:**
+> "Take a screenshot of the simulator and show me the recent logs"
+
+## Auto-Discovery
+
+xclaude automatically discovers:
+
+- **Signing identities** from your keychain
+- **Provisioning profiles** from `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`
+- **Simulators** via `xcrun simctl`
+- **Physical devices** via `xcrun devicectl`
+
+Run `configure_signing` to see available options and auto-apply the best match.
+
+## Supported Platforms
+
+- iOS / iPadOS
+- macOS
+- tvOS
+- visionOS
+
+## Requirements
+
+- macOS with Xcode Command Line Tools
+- Swift 5.9+
+- For physical devices: Apple Developer account with provisioning profiles
+
+## How It Works
+
+xclaude is built on top of [Swift Bundler](https://github.com/stackotter/swift-bundler), a tool for building Swift apps without Xcode. xclaude adds:
+
+1. **MCP interface** - JSON-RPC 2.0 protocol for Claude Code integration
+2. **Auto-discovery** - Automatic signing credential detection
+3. **Config translation** - Simple `xclaude.toml` → Swift Bundler's `Bundler.toml`
+4. **Scaffolding** - Project, model, extension, and API client generation
+5. **Developer tools** - Screenshots, logs, diagnostics
+
+## Troubleshooting
+
+### "No signing identity found"
+
+Run `discover_signing` to see available identities, or:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+### "No provisioning profile found"
+
+For simulators, no profile is needed. For devices:
+1. Open Xcode → Preferences → Accounts
+2. Download provisioning profiles
+3. Run `configure_signing` in xclaude
+
+### Build fails
+
+Run `diagnose` to check your environment:
+- Xcode installation
+- Package.swift validity
+- Icon presence
+- Signing status
+
+## License
+
+MIT
+
+## Credits
+
+Built on [Swift Bundler](https://github.com/stackotter/swift-bundler) by stackotter.

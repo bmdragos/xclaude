@@ -80,8 +80,6 @@ enum PlistCreator {
     var entries: [String: Any?] = [
       "CFBundleDevelopmentRegion": "en",
       "CFBundleExecutable": appName,
-      "CFBundleIconFile": "AppIcon",
-      "CFBundleIconName": "AppIcon",
       "CFBundleIdentifier": configuration.identifier,
       "CFBundleInfoDictionaryVersion": "6.0",
       "CFBundleName": appName,
@@ -90,6 +88,17 @@ enum PlistCreator {
       "CFBundleVersion": configuration.version,
       "LSApplicationCategoryType": configuration.category,
     ]
+
+    // Only add CFBundleIconFile/CFBundleIconName for macOS (.icns files)
+    // iOS/tvOS/visionOS use CFBundleIcons which comes from actool's partial plist
+    switch platform {
+      case .macOS, .macCatalyst:
+        entries["CFBundleIconFile"] = "AppIcon"
+        entries["CFBundleIconName"] = "AppIcon"
+      case .iOS, .iOSSimulator, .tvOS, .tvOSSimulator, .visionOS, .visionOSSimulator,
+          .linux, .windows:
+        break
+    }
 
     switch platform {
       case .macOS, .macCatalyst:
