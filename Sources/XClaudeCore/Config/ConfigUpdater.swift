@@ -133,6 +133,7 @@ public struct CapabilityManager {
     public let message: String
     public let capability: String
     public let entitlements: [String: String]?
+    public let infoPlistAdditions: [String: String]?
   }
 
   /// Known capabilities and their entitlements (iOS + macOS)
@@ -362,6 +363,66 @@ public struct CapabilityManager {
       }
     }
 
+    /// Info.plist usage description key (if capability requires one)
+    var usageDescriptionKey: String? {
+      switch self {
+      case .appleEvents:
+        return "NSAppleEventsUsageDescription"
+      case .camera:
+        return "NSCameraUsageDescription"
+      case .audioInput:
+        return "NSMicrophoneUsageDescription"
+      case .location:
+        return "NSLocationUsageDescription"
+      case .photos:
+        return "NSPhotoLibraryUsageDescription"
+      case .addressBook:
+        return "NSContactsUsageDescription"
+      case .calendars:
+        return "NSCalendarsUsageDescription"
+      case .healthKit:
+        return "NSHealthShareUsageDescription"
+      case .homeKit:
+        return "NSHomeKitUsageDescription"
+      case .siri:
+        return "NSSiriUsageDescription"
+      case .nfc:
+        return "NFCReaderUsageDescription"
+      default:
+        return nil
+      }
+    }
+
+    /// Default usage description for Info.plist
+    var defaultUsageDescription: String? {
+      switch self {
+      case .appleEvents:
+        return "This app needs to control other applications for automation."
+      case .camera:
+        return "This app needs access to the camera."
+      case .audioInput:
+        return "This app needs access to the microphone."
+      case .location:
+        return "This app needs access to your location."
+      case .photos:
+        return "This app needs access to your photo library."
+      case .addressBook:
+        return "This app needs access to your contacts."
+      case .calendars:
+        return "This app needs access to your calendars."
+      case .healthKit:
+        return "This app needs access to your health data."
+      case .homeKit:
+        return "This app needs access to your HomeKit devices."
+      case .siri:
+        return "This app uses Siri to provide voice commands."
+      case .nfc:
+        return "This app needs to read NFC tags."
+      default:
+        return nil
+      }
+    }
+
     /// Platform this capability applies to
     var platform: CapabilityPlatform {
       switch self {
@@ -402,7 +463,8 @@ public struct CapabilityManager {
         success: false,
         message: "Unknown capability '\(capabilityName)'. Valid options: \(validCaps)",
         capability: capabilityName,
-        entitlements: nil
+        entitlements: nil,
+        infoPlistAdditions: nil
       )
     }
 
@@ -428,10 +490,26 @@ public struct CapabilityManager {
     let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
     try plistData.write(to: entitlementsPath)
 
-    // Update xclaude.toml to reference entitlements (if needed)
-    // For now, we just track the capability was added
+    // Add Info.plist usage description if needed
+    var infoPlistAdditions: [String: Any] = [:]
+    let infoPlistPath = entitlementsDir.appendingPathComponent("InfoAdditions.plist")
 
-    // Return result
+    // Load existing Info.plist additions if present
+    if FileManager.default.fileExists(atPath: infoPlistPath.path),
+       let data = try? Data(contentsOf: infoPlistPath),
+       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+      infoPlistAdditions = plist
+    }
+
+    // Add usage description if this capability requires one
+    if let usageKey = capability.usageDescriptionKey,
+       let usageDesc = value ?? capability.defaultUsageDescription {
+      infoPlistAdditions[usageKey] = usageDesc
+      let infoPlistData = try PropertyListSerialization.data(fromPropertyList: infoPlistAdditions, format: .xml, options: 0)
+      try infoPlistData.write(to: infoPlistPath)
+    }
+
+    // Build result dictionaries
     var entitlementsDict: [String: String] = [:]
     if let strValue = entitlementValue as? String {
       entitlementsDict[capability.entitlementKey] = strValue
@@ -441,11 +519,18 @@ public struct CapabilityManager {
       entitlementsDict[capability.entitlementKey] = boolValue ? "true" : "false"
     }
 
+    var infoPlistDict: [String: String]? = nil
+    if let usageKey = capability.usageDescriptionKey,
+       let usageDesc = capability.defaultUsageDescription {
+      infoPlistDict = [usageKey: value ?? usageDesc]
+    }
+
     return CapabilityResult(
       success: true,
       message: "Added \(capability.description) capability",
       capability: capabilityName,
-      entitlements: entitlementsDict
+      entitlements: entitlementsDict,
+      infoPlistAdditions: infoPlistDict
     )
   }
 

@@ -63,6 +63,23 @@ public struct ConfigTranslator {
       lines.append("icon = \"\(config.app.icon)\"")
     }
 
+    // Add Info.plist additions from capabilities (if present)
+    let infoAdditionsPath = derivedDirectory(for: projectDirectory)
+      .appendingPathComponent("InfoAdditions.plist")
+    if FileManager.default.fileExists(atPath: infoAdditionsPath.path),
+       let data = try? Data(contentsOf: infoAdditionsPath),
+       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String],
+       !plist.isEmpty {
+      lines.append("")
+      lines.append("[apps.\(config.app.name).extra_plist_entries]")
+      for (key, value) in plist.sorted(by: { $0.key < $1.key }) {
+        // Escape the value for TOML
+        let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
+          .replacingOccurrences(of: "\"", with: "\\\"")
+        lines.append("\"\(key)\" = \"\(escapedValue)\"")
+      }
+    }
+
     return lines.joined(separator: "\n") + "\n"
   }
 
