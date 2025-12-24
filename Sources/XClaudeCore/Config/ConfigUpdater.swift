@@ -165,6 +165,21 @@ public struct CapabilityManager {
     case addressBook = "address-book"
     case calendars = "calendars"
     case photos = "photos"
+    case systemExtension = "system-extension"
+
+    // Continuity & Ecosystem capabilities
+    case handoff = "handoff"
+    case associatedDomains = "associated-domains"
+    case signInWithApple = "sign-in-with-apple"
+    case gameCenter = "game-center"
+    case sharePlay = "shareplay"
+    case nfc = "nfc"
+    case carPlay = "carplay"
+    case weatherKit = "weatherkit"
+    case classKit = "classkit"
+    case accessWifi = "access-wifi"
+    case hotspot = "hotspot"
+    case multipath = "multipath"
 
     /// The entitlement key for this capability
     var entitlementKey: String {
@@ -221,6 +236,33 @@ public struct CapabilityManager {
         return "com.apple.security.personal-information.calendars"
       case .photos:
         return "com.apple.security.personal-information.photos-library"
+      case .systemExtension:
+        return "com.apple.developer.system-extension.install"
+      // Continuity & Ecosystem
+      case .handoff:
+        return "com.apple.developer.handoff"
+      case .associatedDomains:
+        return "com.apple.developer.associated-domains"
+      case .signInWithApple:
+        return "com.apple.developer.applesignin"
+      case .gameCenter:
+        return "com.apple.developer.game-center"
+      case .sharePlay:
+        return "com.apple.developer.group-session"
+      case .nfc:
+        return "com.apple.developer.nfc.readersession.formats"
+      case .carPlay:
+        return "com.apple.developer.carplay-audio"
+      case .weatherKit:
+        return "com.apple.developer.weatherkit"
+      case .classKit:
+        return "com.apple.developer.ClassKit-environment"
+      case .accessWifi:
+        return "com.apple.developer.networking.wifi-info"
+      case .hotspot:
+        return "com.apple.developer.networking.HotspotConfiguration"
+      case .multipath:
+        return "com.apple.developer.networking.multipath"
       }
     }
 
@@ -254,7 +296,21 @@ public struct CapabilityManager {
       case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
            .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
            .filesDownloads, .audioInput, .camera, .location,
-           .addressBook, .calendars, .photos:
+           .addressBook, .calendars, .photos, .systemExtension:
+        return true
+      // Continuity & Ecosystem
+      case .handoff, .gameCenter, .weatherKit, .classKit,
+           .accessWifi, .hotspot, .multipath:
+        return true
+      case .associatedDomains:
+        return ["applinks:example.com", "webcredentials:example.com"]
+      case .signInWithApple:
+        return ["Default"]
+      case .sharePlay:
+        return true
+      case .nfc:
+        return ["NDEF", "TAG"]
+      case .carPlay:
         return true
       }
     }
@@ -284,25 +340,44 @@ public struct CapabilityManager {
       case .filesUserSelectedReadWrite: return "User-Selected Files (Read/Write)"
       case .filesDownloads: return "Downloads Folder Access"
       case .audioInput: return "Microphone Access"
-      case .camera: return "Camera Access"
+      case .camera: return "Camera Access (Continuity Camera)"
       case .location: return "Location Services"
       case .addressBook: return "Contacts Access"
       case .calendars: return "Calendars Access"
       case .photos: return "Photos Library Access"
+      case .systemExtension: return "System Extension Installation"
+      // Continuity & Ecosystem
+      case .handoff: return "Handoff (Continuity)"
+      case .associatedDomains: return "Associated Domains (Universal Links)"
+      case .signInWithApple: return "Sign in with Apple"
+      case .gameCenter: return "Game Center"
+      case .sharePlay: return "SharePlay (Group Activities)"
+      case .nfc: return "NFC Tag Reading"
+      case .carPlay: return "CarPlay"
+      case .weatherKit: return "WeatherKit"
+      case .classKit: return "ClassKit (Education)"
+      case .accessWifi: return "Access WiFi Information"
+      case .hotspot: return "Hotspot Configuration"
+      case .multipath: return "Multipath Networking"
       }
     }
 
     /// Platform this capability applies to
     var platform: CapabilityPlatform {
       switch self {
+      // Both platforms
       case .pushNotifications, .appGroups, .iCloud, .keychain, .inAppPurchase,
-           .siri, .audioInput, .camera, .location, .addressBook, .calendars, .photos:
+           .siri, .audioInput, .camera, .location, .addressBook, .calendars, .photos,
+           .handoff, .associatedDomains, .signInWithApple, .gameCenter, .sharePlay:
         return .both
-      case .healthKit, .homeKit, .networkExtension, .wallet, .backgroundModes:
+      // iOS only
+      case .healthKit, .homeKit, .networkExtension, .wallet, .backgroundModes,
+           .nfc, .carPlay, .classKit, .accessWifi, .hotspot, .multipath, .weatherKit:
         return .iOS
+      // macOS only
       case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
            .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
-           .filesDownloads:
+           .filesDownloads, .systemExtension:
         return .macOS
       }
     }
