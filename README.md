@@ -20,7 +20,7 @@ All without ever opening Xcode or creating an `.xcodeproj` file.
 ### Build from source
 
 ```bash
-git clone https://github.com/yourusername/xclaude.git
+git clone https://github.com/bmdragos/xclaude.git
 cd xclaude
 swift build -c release
 ```
@@ -103,7 +103,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 ## Features
 
-### 30 MCP Tools
+### 31 MCP Tools
 
 | Category | Tools |
 |----------|-------|
@@ -117,6 +117,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 | **Capabilities** | `add_capability`, `list_capabilities` |
 | **Distribution** | `archive`, `validate`, `upload` |
 | **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
+| **Info** | `get_version` |
 
 ### Example Workflows
 
@@ -137,6 +138,35 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 **Debug issues:**
 > "Take a screenshot of the simulator and show me the recent logs"
+
+**Add macOS automation capability:**
+> "Add the apple-events capability so my app can control other apps"
+
+### Capabilities (37 available)
+
+`add_capability` automatically handles both entitlements AND Info.plist:
+
+```
+add_capability("apple-events")
+        ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Entitlements.plist:                                         │
+│   com.apple.security.automation.apple-events = true         │
+│                                                             │
+│ Info.plist:                                                 │
+│   NSAppleEventsUsageDescription = "This app needs to..."   │
+└─────────────────────────────────────────────────────────────┘
+        ↓
+    build (macOS)  →  automatically signed with entitlements
+```
+
+**iOS/Shared:** push-notifications, app-groups, icloud, keychain, healthkit, homekit, in-app-purchase, siri, wallet, background-modes, and more.
+
+**macOS:** apple-events, hardened-runtime, camera, microphone, location, files-read-write, system-extension, and more.
+
+**Continuity/Ecosystem:** handoff, associated-domains, sign-in-with-apple, shareplay, nfc, carplay, weatherkit, and more.
+
+Run `list_capabilities` to see all 37 with platform info.
 
 ## Auto-Discovery
 
