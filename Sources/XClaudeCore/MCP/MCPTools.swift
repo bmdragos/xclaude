@@ -8,6 +8,12 @@ import AppKit
 
 /// MCP tool definitions and implementations
 public enum MCPTools {
+  /// Process start time (captured when module loads - changes on /mcp reconnect)
+  private static let processStartTime: Date = Date()
+
+  /// xclaude version
+  public static let version = "0.1.0-dev"
+
   /// Tool definition
   struct Tool {
     let name: String
@@ -17,6 +23,15 @@ public enum MCPTools {
 
   /// All available tools
   static let allTools: [Tool] = [
+    Tool(
+      name: "get_version",
+      description: "Get xclaude version and build info. Use this to verify you're running the latest binary after /mcp reconnect.",
+      inputSchema: [
+        "type": "object",
+        "properties": [:] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
     Tool(
       name: "discover_signing",
       description: "Discover available code signing identities and provisioning profiles",
@@ -625,6 +640,8 @@ public enum MCPTools {
   /// Call a tool by name
   static func call(name: String, arguments: [String: Any]) async throws -> String {
     switch name {
+      case "get_version":
+        return try await getVersion()
       case "discover_signing":
         return try await discoverSigning(arguments: arguments)
       case "get_signing_status":
@@ -691,6 +708,29 @@ public enum MCPTools {
   }
 
   // MARK: - Tool Implementations
+
+  /// Version info result
+  struct VersionInfo: Codable {
+    let version: String
+    let processStartTime: String
+    let processId: Int32
+    let swiftVersion: String
+    let capabilities: Int
+  }
+
+  static func getVersion() async throws -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+
+    let info = VersionInfo(
+      version: MCPTools.version,
+      processStartTime: formatter.string(from: processStartTime),
+      processId: ProcessInfo.processInfo.processIdentifier,
+      swiftVersion: "5.9+",
+      capabilities: CapabilityManager.Capability.allCases.count
+    )
+    return encodeJSON(info)
+  }
 
   static func discoverSigning(arguments: [String: Any]) async throws -> String {
     let forceRefresh = arguments["force_refresh"] as? Bool ?? false
