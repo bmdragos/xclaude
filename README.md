@@ -142,7 +142,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 **Add macOS automation capability:**
 > "Add the apple-events capability so my app can control other apps"
 
-### Capabilities (37 available)
+### Capabilities (61 available)
 
 `add_capability` automatically handles both entitlements AND Info.plist:
 
@@ -162,11 +162,19 @@ add_capability("apple-events")
 
 **iOS/Shared:** push-notifications, app-groups, icloud, keychain, healthkit, homekit, in-app-purchase, siri, wallet, background-modes, and more.
 
-**macOS:** apple-events, hardened-runtime, camera, microphone, location, files-read-write, system-extension, and more.
+**macOS:** apple-events, hardened-runtime, camera, microphone, location, files-read-write, system-extension, network-client, network-server, bluetooth, usb, print, serial, app-sandbox, and more.
 
 **Continuity/Ecosystem:** handoff, associated-domains, sign-in-with-apple, shareplay, nfc, carplay, weatherkit, and more.
 
-Run `list_capabilities` to see all 37 with platform info.
+**Notifications:** critical-alerts, time-sensitive, communication-notifications.
+
+**Newer APIs:** shazamkit, musickit, push-to-talk, matter, financekit, devicecheck.
+
+**Performance:** increased-memory-limit, extended-virtual-addressing.
+
+**Other:** personal-vpn, data-protection, family-controls, autofill-credentials, maps-routing.
+
+Run `list_capabilities` to see all 61 with platform info.
 
 ## Auto-Discovery
 

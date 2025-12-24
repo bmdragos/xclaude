@@ -182,6 +182,39 @@ public struct CapabilityManager {
     case hotspot = "hotspot"
     case multipath = "multipath"
 
+    // App Sandbox (macOS)
+    case networkClient = "network-client"
+    case networkServer = "network-server"
+    case bluetooth = "bluetooth"
+    case usb = "usb"
+    case printing = "print"
+    case serialPort = "serial"
+
+    // Notifications
+    case criticalAlerts = "critical-alerts"
+    case timeSensitive = "time-sensitive"
+    case communicationNotifications = "communication-notifications"
+
+    // Newer APIs
+    case shazamKit = "shazamkit"
+    case musicKit = "musickit"
+    case pushToTalk = "push-to-talk"
+    case matter = "matter"
+    case financeKit = "financekit"
+    case deviceCheck = "devicecheck"
+
+    // Memory/Performance
+    case increasedMemoryLimit = "increased-memory-limit"
+    case extendedVirtualAddressing = "extended-virtual-addressing"
+
+    // Other
+    case personalVPN = "personal-vpn"
+    case dataProtection = "data-protection"
+    case familyControls = "family-controls"
+    case autofillCredentials = "autofill-credentials"
+    case mapsRouting = "maps-routing"
+    case appSandbox = "app-sandbox"
+
     /// The entitlement key for this capability
     var entitlementKey: String {
       switch self {
@@ -264,6 +297,57 @@ public struct CapabilityManager {
         return "com.apple.developer.networking.HotspotConfiguration"
       case .multipath:
         return "com.apple.developer.networking.multipath"
+      // App Sandbox (macOS)
+      case .networkClient:
+        return "com.apple.security.network.client"
+      case .networkServer:
+        return "com.apple.security.network.server"
+      case .bluetooth:
+        return "com.apple.security.device.bluetooth"
+      case .usb:
+        return "com.apple.security.device.usb"
+      case .printing:
+        return "com.apple.security.print"
+      case .serialPort:
+        return "com.apple.security.device.serial"
+      // Notifications
+      case .criticalAlerts:
+        return "com.apple.developer.usernotifications.critical-alerts"
+      case .timeSensitive:
+        return "com.apple.developer.usernotifications.time-sensitive"
+      case .communicationNotifications:
+        return "com.apple.developer.usernotifications.communication"
+      // Newer APIs
+      case .shazamKit:
+        return "com.apple.developer.shazamkit.referral"
+      case .musicKit:
+        return "com.apple.developer.musickit"
+      case .pushToTalk:
+        return "com.apple.developer.push-to-talk"
+      case .matter:
+        return "com.apple.developer.matter.allow-setup-payload"
+      case .financeKit:
+        return "com.apple.developer.financekit"
+      case .deviceCheck:
+        return "com.apple.developer.devicecheck.appattest-environment"
+      // Memory/Performance
+      case .increasedMemoryLimit:
+        return "com.apple.developer.kernel.increased-memory-limit"
+      case .extendedVirtualAddressing:
+        return "com.apple.developer.kernel.extended-virtual-addressing"
+      // Other
+      case .personalVPN:
+        return "com.apple.developer.networking.vpn.api"
+      case .dataProtection:
+        return "com.apple.developer.default-data-protection"
+      case .familyControls:
+        return "com.apple.developer.family-controls"
+      case .autofillCredentials:
+        return "com.apple.developer.authentication-services.autofill-credential-provider"
+      case .mapsRouting:
+        return "com.apple.developer.maps"
+      case .appSandbox:
+        return "com.apple.security.app-sandbox"
       }
     }
 
@@ -313,6 +397,31 @@ public struct CapabilityManager {
         return ["NDEF", "TAG"]
       case .carPlay:
         return true
+      // App Sandbox (macOS) - all boolean
+      case .networkClient, .networkServer, .bluetooth, .usb, .printing, .serialPort, .appSandbox:
+        return true
+      // Notifications - all boolean
+      case .criticalAlerts, .timeSensitive, .communicationNotifications:
+        return true
+      // Newer APIs - mostly boolean
+      case .shazamKit, .musicKit, .pushToTalk, .matter, .financeKit:
+        return true
+      case .deviceCheck:
+        return "production"  // or "development"
+      // Memory/Performance - all boolean
+      case .increasedMemoryLimit, .extendedVirtualAddressing:
+        return true
+      // Other
+      case .personalVPN:
+        return ["allow-vpn"]
+      case .dataProtection:
+        return "NSFileProtectionComplete"
+      case .familyControls:
+        return true
+      case .autofillCredentials:
+        return true
+      case .mapsRouting:
+        return true
       }
     }
 
@@ -360,6 +469,34 @@ public struct CapabilityManager {
       case .accessWifi: return "Access WiFi Information"
       case .hotspot: return "Hotspot Configuration"
       case .multipath: return "Multipath Networking"
+      // App Sandbox (macOS)
+      case .networkClient: return "Network Client (Outgoing Connections)"
+      case .networkServer: return "Network Server (Incoming Connections)"
+      case .bluetooth: return "Bluetooth Access"
+      case .usb: return "USB Device Access"
+      case .printing: return "Printing"
+      case .serialPort: return "Serial Port Access"
+      // Notifications
+      case .criticalAlerts: return "Critical Alerts"
+      case .timeSensitive: return "Time-Sensitive Notifications"
+      case .communicationNotifications: return "Communication Notifications"
+      // Newer APIs
+      case .shazamKit: return "ShazamKit"
+      case .musicKit: return "MusicKit"
+      case .pushToTalk: return "Push to Talk"
+      case .matter: return "Matter Smart Home"
+      case .financeKit: return "FinanceKit"
+      case .deviceCheck: return "DeviceCheck / App Attest"
+      // Memory/Performance
+      case .increasedMemoryLimit: return "Increased Memory Limit"
+      case .extendedVirtualAddressing: return "Extended Virtual Addressing"
+      // Other
+      case .personalVPN: return "Personal VPN"
+      case .dataProtection: return "Data Protection"
+      case .familyControls: return "Family Controls (Screen Time)"
+      case .autofillCredentials: return "AutoFill Credential Provider"
+      case .mapsRouting: return "Maps Routing"
+      case .appSandbox: return "App Sandbox"
       }
     }
 
@@ -429,16 +566,23 @@ public struct CapabilityManager {
       // Both platforms
       case .pushNotifications, .appGroups, .iCloud, .keychain, .inAppPurchase,
            .siri, .audioInput, .camera, .location, .addressBook, .calendars, .photos,
-           .handoff, .associatedDomains, .signInWithApple, .gameCenter, .sharePlay:
+           .handoff, .associatedDomains, .signInWithApple, .gameCenter, .sharePlay,
+           .shazamKit, .musicKit, .deviceCheck, .dataProtection, .autofillCredentials:
         return .both
       // iOS only
       case .healthKit, .homeKit, .networkExtension, .wallet, .backgroundModes,
-           .nfc, .carPlay, .classKit, .accessWifi, .hotspot, .multipath, .weatherKit:
+           .nfc, .carPlay, .classKit, .accessWifi, .hotspot, .multipath, .weatherKit,
+           .criticalAlerts, .timeSensitive, .communicationNotifications,
+           .pushToTalk, .matter, .financeKit,
+           .increasedMemoryLimit, .extendedVirtualAddressing,
+           .personalVPN, .familyControls, .mapsRouting:
         return .iOS
       // macOS only
       case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
            .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
-           .filesDownloads, .systemExtension:
+           .filesDownloads, .systemExtension,
+           .networkClient, .networkServer, .bluetooth, .usb, .printing, .serialPort,
+           .appSandbox:
         return .macOS
       }
     }
