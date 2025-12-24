@@ -235,6 +235,22 @@ public struct BuildRunner {
       arguments.append(signing.profile.path)
       arguments.append("--entitlements")
       arguments.append(signing.entitlementsPath)
+    } else if platform == .macOS {
+      // For macOS, sign with entitlements if they exist (for capabilities like apple-events)
+      let entitlementsPath = ConfigTranslator.derivedDirectory(for: projectDirectory)
+        .appendingPathComponent("Entitlements.plist")
+      if FileManager.default.fileExists(atPath: entitlementsPath.path) {
+        // macOS requires codesigning to embed entitlements
+        // Use identity from config, or default to "Apple Development"
+        let config = try? XClaudeConfig.load(from: projectDirectory)
+        let identity = config?.signing?.identity ?? "Apple Development"
+
+        arguments.append("--codesign")
+        arguments.append("--identity")
+        arguments.append(identity)
+        arguments.append("--entitlements")
+        arguments.append(entitlementsPath.path)
+      }
     }
 
     // Run swift-bundler
