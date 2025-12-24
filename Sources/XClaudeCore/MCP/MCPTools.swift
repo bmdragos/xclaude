@@ -898,25 +898,47 @@ public enum MCPTools {
     let config = try? XClaudeConfig.load(from: URL(fileURLWithPath: pathStr))
     let bundleId = config?.app.bundleId ?? "com.xclaude.app"
 
-    // Then deploy
-    let target = DeployRunner.Target.parse(targetStr)
+    // Handle platform-specific deployment
+    let platform = BuildRunner.Platform(rawValue: platformStr) ?? .iOSSimulator
     let deployResult: DeployRunner.DeployResult
 
-    switch target {
-    case .simulator, .simulatorByName, .anyBootedSimulator:
-      deployResult = try await DeployRunner.deployToSimulator(
+    if platform == .macOS {
+      // For macOS, just open the .app directly
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+      process.arguments = [appPath]
+      try process.run()
+      process.waitUntilExit()
+
+      let launchSuccess = process.terminationStatus == 0
+      deployResult = DeployRunner.DeployResult(
+        success: launchSuccess,
+        target: DeployRunner.TargetInfo(type: .simulator, udid: "local", name: "macOS (local)"),
         appPath: appPath,
         bundleId: bundleId,
-        target: target,
-        launch: true
+        launched: launchSuccess,
+        error: launchSuccess ? nil : "Failed to launch app"
       )
-    case .device, .deviceByName, .anyDevice:
-      deployResult = try await DeployRunner.deployToDevice(
-        appPath: appPath,
-        bundleId: bundleId,
-        target: target,
-        launch: true
-      )
+    } else {
+      // For iOS/tvOS/visionOS, deploy to simulator or device
+      let target = DeployRunner.Target.parse(targetStr)
+
+      switch target {
+      case .simulator, .simulatorByName, .anyBootedSimulator:
+        deployResult = try await DeployRunner.deployToSimulator(
+          appPath: appPath,
+          bundleId: bundleId,
+          target: target,
+          launch: true
+        )
+      case .device, .deviceByName, .anyDevice:
+        deployResult = try await DeployRunner.deployToDevice(
+          appPath: appPath,
+          bundleId: bundleId,
+          target: target,
+          launch: true
+        )
+      }
     }
 
     return encodeJSON(RunResult(
