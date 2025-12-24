@@ -135,8 +135,9 @@ public struct CapabilityManager {
     public let entitlements: [String: String]?
   }
 
-  /// Known iOS capabilities and their entitlements
+  /// Known capabilities and their entitlements (iOS + macOS)
   public enum Capability: String, CaseIterable {
+    // iOS/Shared capabilities
     case pushNotifications = "push-notifications"
     case appGroups = "app-groups"
     case iCloud = "icloud"
@@ -149,9 +150,26 @@ public struct CapabilityManager {
     case wallet = "wallet"
     case backgroundModes = "background-modes"
 
+    // macOS-specific capabilities
+    case appleEvents = "apple-events"
+    case hardenedRuntime = "hardened-runtime"
+    case allowJit = "allow-jit"
+    case allowUnsignedMemory = "allow-unsigned-memory"
+    case allowDyldEnv = "allow-dyld-env"
+    case filesUserSelectedReadOnly = "files-read-only"
+    case filesUserSelectedReadWrite = "files-read-write"
+    case filesDownloads = "files-downloads"
+    case audioInput = "audio-input"
+    case camera = "camera"
+    case location = "location"
+    case addressBook = "address-book"
+    case calendars = "calendars"
+    case photos = "photos"
+
     /// The entitlement key for this capability
     var entitlementKey: String {
       switch self {
+      // iOS/Shared
       case .pushNotifications:
         return "aps-environment"
       case .appGroups:
@@ -174,12 +192,42 @@ public struct CapabilityManager {
         return "com.apple.developer.pass-type-identifiers"
       case .backgroundModes:
         return "UIBackgroundModes"
+      // macOS-specific
+      case .appleEvents:
+        return "com.apple.security.automation.apple-events"
+      case .hardenedRuntime:
+        return "com.apple.security.app-sandbox"  // Note: hardened runtime uses code signing flags
+      case .allowJit:
+        return "com.apple.security.cs.allow-jit"
+      case .allowUnsignedMemory:
+        return "com.apple.security.cs.allow-unsigned-executable-memory"
+      case .allowDyldEnv:
+        return "com.apple.security.cs.allow-dyld-environment-variables"
+      case .filesUserSelectedReadOnly:
+        return "com.apple.security.files.user-selected.read-only"
+      case .filesUserSelectedReadWrite:
+        return "com.apple.security.files.user-selected.read-write"
+      case .filesDownloads:
+        return "com.apple.security.files.downloads.read-write"
+      case .audioInput:
+        return "com.apple.security.device.audio-input"
+      case .camera:
+        return "com.apple.security.device.camera"
+      case .location:
+        return "com.apple.security.personal-information.location"
+      case .addressBook:
+        return "com.apple.security.personal-information.addressbook"
+      case .calendars:
+        return "com.apple.security.personal-information.calendars"
+      case .photos:
+        return "com.apple.security.personal-information.photos-library"
       }
     }
 
     /// Default entitlement value (some capabilities need specific values)
     var defaultValue: Any {
       switch self {
+      // iOS/Shared
       case .pushNotifications:
         return "development"  // or "production" for release
       case .appGroups:
@@ -202,12 +250,19 @@ public struct CapabilityManager {
         return ["$(TeamIdentifierPrefix)*"]
       case .backgroundModes:
         return ["fetch", "remote-notification"]
+      // macOS-specific (all boolean entitlements)
+      case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
+           .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
+           .filesDownloads, .audioInput, .camera, .location,
+           .addressBook, .calendars, .photos:
+        return true
       }
     }
 
     /// Human-readable description
     var description: String {
       switch self {
+      // iOS/Shared
       case .pushNotifications: return "Push Notifications"
       case .appGroups: return "App Groups"
       case .iCloud: return "iCloud"
@@ -219,8 +274,44 @@ public struct CapabilityManager {
       case .siri: return "SiriKit"
       case .wallet: return "Wallet"
       case .backgroundModes: return "Background Modes"
+      // macOS-specific
+      case .appleEvents: return "Apple Events (Automation)"
+      case .hardenedRuntime: return "Hardened Runtime"
+      case .allowJit: return "Allow JIT Compilation"
+      case .allowUnsignedMemory: return "Allow Unsigned Executable Memory"
+      case .allowDyldEnv: return "Allow DYLD Environment Variables"
+      case .filesUserSelectedReadOnly: return "User-Selected Files (Read Only)"
+      case .filesUserSelectedReadWrite: return "User-Selected Files (Read/Write)"
+      case .filesDownloads: return "Downloads Folder Access"
+      case .audioInput: return "Microphone Access"
+      case .camera: return "Camera Access"
+      case .location: return "Location Services"
+      case .addressBook: return "Contacts Access"
+      case .calendars: return "Calendars Access"
+      case .photos: return "Photos Library Access"
       }
     }
+
+    /// Platform this capability applies to
+    var platform: CapabilityPlatform {
+      switch self {
+      case .pushNotifications, .appGroups, .iCloud, .keychain, .inAppPurchase,
+           .siri, .audioInput, .camera, .location, .addressBook, .calendars, .photos:
+        return .both
+      case .healthKit, .homeKit, .networkExtension, .wallet, .backgroundModes:
+        return .iOS
+      case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
+           .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
+           .filesDownloads:
+        return .macOS
+      }
+    }
+  }
+
+  public enum CapabilityPlatform: String, Codable {
+    case iOS
+    case macOS
+    case both
   }
 
   /// Add a capability to the project
@@ -283,12 +374,23 @@ public struct CapabilityManager {
     )
   }
 
-  /// List all available capabilities
-  public static func listCapabilities() -> [String: String] {
-    var result: [String: String] = [:]
+  /// List all available capabilities with platform info
+  public static func listCapabilities() -> [String: CapabilityInfo] {
+    var result: [String: CapabilityInfo] = [:]
     for cap in Capability.allCases {
-      result[cap.rawValue] = cap.description
+      result[cap.rawValue] = CapabilityInfo(
+        description: cap.description,
+        platform: cap.platform.rawValue,
+        entitlementKey: cap.entitlementKey
+      )
     }
     return result
+  }
+
+  /// Capability info for listing
+  public struct CapabilityInfo: Codable {
+    public let description: String
+    public let platform: String
+    public let entitlementKey: String
   }
 }
