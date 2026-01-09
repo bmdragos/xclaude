@@ -181,13 +181,13 @@ public enum MCPTools {
     ),
     Tool(
       name: "deploy",
-      description: "Deploy an app to a device or simulator. Best for iOS physical devices - use after build for reliable device deployment.",
+      description: "Install an app to a device, simulator, or macOS (/Applications). Use target='macOS' for macOS, 'device' for iOS physical devices, 'simulator' for iOS Simulator.",
       inputSchema: [
         "type": "object",
         "properties": [
           "target": [
             "type": "string",
-            "description": "Target device/simulator (UDID, name, or 'simulator'/'device')",
+            "description": "Target: 'macOS' (install to /Applications), 'device' (iOS physical), 'simulator' (iOS Simulator), or UDID/name",
             "default": "simulator"
           ],
           "app_path": [
@@ -209,7 +209,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "run",
-      description: "Build and run an app (combines build + deploy). Works well for macOS and iOS Simulator. For iOS physical devices, prefer using build then deploy separately.",
+      description: "Build and run an app directly from the build folder (not installed). Good for quick iteration on macOS and iOS Simulator. For permanent install, use build + deploy.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -1254,7 +1254,7 @@ public enum MCPTools {
     let launch = arguments["launch"] as? Bool ?? true
     let target = DeployRunner.Target.parse(targetStr)
 
-    // Determine if this is a simulator or device target
+    // Determine if this is a simulator, device, or macOS target
     let result: DeployRunner.DeployResult
     switch target {
     case .simulator, .simulatorByName, .anyBootedSimulator:
@@ -1269,6 +1269,12 @@ public enum MCPTools {
         appPath: appPath,
         bundleId: bundleId,
         target: target,
+        launch: launch
+      )
+    case .macOS:
+      result = try await DeployRunner.deployToMacOS(
+        appPath: appPath,
+        bundleId: bundleId,
         launch: launch
       )
     }
@@ -1483,6 +1489,16 @@ public enum MCPTools {
           bundleId: bundleId,
           target: target,
           launch: true
+        )
+      case .macOS:
+        // Should not reach here - macOS is handled above
+        deployResult = DeployRunner.DeployResult(
+          success: false,
+          target: DeployRunner.TargetInfo(type: .macOS, udid: "local", name: "macOS"),
+          appPath: finalAppPath,
+          bundleId: bundleId,
+          launched: false,
+          error: "Unexpected macOS target in iOS deploy path"
         )
       }
     }

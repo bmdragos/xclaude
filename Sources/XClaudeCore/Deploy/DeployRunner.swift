@@ -39,6 +39,7 @@ public struct DeployRunner {
   public enum TargetType: String, Codable {
     case simulator
     case device
+    case macOS
   }
 
   /// Deploy target specification
@@ -49,6 +50,7 @@ public struct DeployRunner {
     case device(udid: String)
     case deviceByName(name: String)
     case anyDevice
+    case macOS
 
     /// Parse target string from MCP argument
     /// Supports prefixes: "device:<udid>", "simulator:<udid>", or just keywords "device"/"simulator"
@@ -81,6 +83,8 @@ public struct DeployRunner {
         return .anyBootedSimulator
       case "device":
         return .anyDevice
+      case "macos", "mac", "local":
+        return .macOS
       default:
         // Check if it looks like a UDID (contains dashes or is 40 hex chars)
         if string.contains("-") || (string.count == 40 && string.allSatisfy({ $0.isHexDigit })) {
@@ -341,6 +345,81 @@ public struct DeployRunner {
       results.append(DeviceInfo(udid: udid, name: name))
     }
     return results
+  }
+
+  // MARK: - macOS Deployment
+
+  /// Deploy to macOS (install to /Applications)
+  public static func deployToMacOS(
+    appPath: String,
+    bundleId: String,
+    launch: Bool = true
+  ) async throws -> DeployResult {
+    let appURL = URL(fileURLWithPath: appPath)
+    let appName = appURL.lastPathComponent
+    let destinationURL = URL(fileURLWithPath: "/Applications").appendingPathComponent(appName)
+
+    // Remove existing app if present
+    if FileManager.default.fileExists(atPath: destinationURL.path) {
+      do {
+        try FileManager.default.removeItem(at: destinationURL)
+      } catch {
+        return DeployResult(
+          success: false,
+          target: TargetInfo(type: .macOS, udid: "local", name: "macOS"),
+          appPath: appPath,
+          bundleId: bundleId,
+          launched: false,
+          error: "Failed to remove existing app: \(error.localizedDescription)"
+        )
+      }
+    }
+
+    // Copy app to /Applications
+    do {
+      try FileManager.default.copyItem(at: appURL, to: destinationURL)
+    } catch {
+      return DeployResult(
+        success: false,
+        target: TargetInfo(type: .macOS, udid: "local", name: "macOS"),
+        appPath: appPath,
+        bundleId: bundleId,
+        launched: false,
+        error: "Failed to install to /Applications: \(error.localizedDescription)"
+      )
+    }
+
+    // Launch if requested
+    var launched = false
+    if launch {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+      process.arguments = [destinationURL.path]
+
+      do {
+        try process.run()
+        process.waitUntilExit()
+        launched = process.terminationStatus == 0
+      } catch {
+        // Install succeeded but launch failed
+        return DeployResult(
+          success: true,
+          target: TargetInfo(type: .macOS, udid: "local", name: "macOS"),
+          appPath: destinationURL.path,
+          bundleId: bundleId,
+          launched: false,
+          error: "Installed but failed to launch: \(error.localizedDescription)"
+        )
+      }
+    }
+
+    return DeployResult(
+      success: true,
+      target: TargetInfo(type: .macOS, udid: "local", name: "macOS"),
+      appPath: destinationURL.path,
+      bundleId: bundleId,
+      launched: launched
+    )
   }
 
   // MARK: - Helpers
