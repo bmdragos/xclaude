@@ -94,3 +94,35 @@ throw Error(.failedToReadFile(path), cause: underlyingError)
 - 2-space indentation
 - Functional style: avoid global state, prefer static functions
 - Swift 6 with typed throws
+
+## Git Workflow
+
+This repo is a fork of `stackotter/swift-bundler`:
+
+```
+origin    https://github.com/bmdragos/xclaude.git      # Our repo
+upstream  https://github.com/stackotter/swift-bundler.git  # Original
+```
+
+**Important:**
+- Always specify `--repo bmdragos/xclaude` for `gh` commands (releases, PRs, issues)
+- Never push to upstream (stackotter's repo)
+- Keep upstream to pull in Swift Bundler updates if needed
+
+```bash
+# Create releases
+gh release create v3.1.0 --repo bmdragos/xclaude --title "Title" --notes "Notes"
+
+# Pull upstream updates (if needed)
+git fetch upstream
+git merge upstream/main
+```
+
+## Distribution
+
+Install via Mint:
+```bash
+mint install bmdragos/xclaude
+```
+
+This installs both `xclaude` and `swift-bundler` to `~/.mint/bin/`.
