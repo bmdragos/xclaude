@@ -69,13 +69,15 @@ Restart Claude Code to load the MCP server.
 
 Once configured, just ask Claude:
 
-> "Create a new iOS app called TaskMaster"
+> "Create a new iOS app called TaskMaster and run it on the simulator"
 
 Claude will use xclaude to:
 1. Create the project structure
 2. Generate `Package.swift` and `xclaude.toml`
 3. Scaffold SwiftUI app code
 4. Build and deploy to the simulator
+
+> **No signing required for simulators.** You can start building and testing iOS apps immediately. Signing is only needed when deploying to physical devices.
 
 ### Project Structure
 
