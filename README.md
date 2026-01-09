@@ -236,9 +236,11 @@ security find-identity -v -p codesigning
 ### "No provisioning profile found"
 
 For simulators, no profile is needed. For devices:
-1. Open Xcode → Preferences → Accounts
-2. Download provisioning profiles
+1. Open Xcode → Settings → Accounts
+2. Add your Apple ID and download provisioning profiles
 3. Run `configure_signing` in xclaude
+
+See Apple's [Distributing Your App to Registered Devices](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices) guide for detailed setup.
 
 ### Build fails
 
