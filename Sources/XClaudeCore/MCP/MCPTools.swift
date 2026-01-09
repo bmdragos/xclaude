@@ -1268,14 +1268,141 @@ public enum MCPTools {
     let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
     let targetStr = arguments["target"] as? String ?? "simulator"
 
-    // First build
-    let buildResult = try await BuildRunner.build(
-      projectDirectory: URL(fileURLWithPath: pathStr),
-      platform: BuildRunner.Platform(rawValue: platformStr) ?? .iOSSimulator,
-      configuration: configStr == "release" ? .release : .debug
+    guard let platform = BuildRunner.Platform(rawValue: platformStr) else {
+      return encodeJSON(RunResult(
+        success: false,
+        buildResult: BuildRunner.BuildResult(
+          success: false,
+          appPath: nil,
+          platform: platformStr,
+          configuration: configStr,
+          duration: 0,
+          warnings: [],
+          errors: [BuildRunner.BuildError(code: "INVALID_PLATFORM", message: "Invalid platform: \(platformStr)")]
+        ),
+        deployResult: nil
+      ))
+    }
+
+    let projectURL = URL(fileURLWithPath: pathStr)
+
+    // Detect project type and prepare config (same as buildStart)
+    let projectType = ConfigTranslator.detectProjectType(at: projectURL)
+
+    var configFileArg: String? = nil
+    if projectType == .xclaude {
+      let config = try XClaudeConfig.load(from: projectURL)
+      let configPath = try ConfigTranslator.translate(config: config, projectDirectory: projectURL)
+      configFileArg = configPath.path
+    }
+
+    // Find swift-bundler
+    guard let bundlerPath = findSwiftBundler() else {
+      return encodeJSON(RunResult(
+        success: false,
+        buildResult: BuildRunner.BuildResult(
+          success: false,
+          appPath: nil,
+          platform: platformStr,
+          configuration: configStr,
+          duration: 0,
+          warnings: [],
+          errors: [BuildRunner.BuildError(code: "BUNDLER_NOT_FOUND", message: "swift-bundler not found")]
+        ),
+        deployResult: nil
+      ))
+    }
+
+    // Build arguments
+    var args = ["bundle", "-p", platformStr, "-c", configStr]
+    args.append("--directory")
+    args.append(pathStr)
+
+    if let configFile = configFileArg {
+      args.append("--config-file")
+      args.append(configFile)
+    }
+
+    // Resolve signing for device builds (xclaude projects only)
+    if platform.requiresSigning && projectType == .xclaude {
+      let config = try? XClaudeConfig.load(from: projectURL)
+      let bundleId = config?.app.bundleId ?? "com.example.app"
+
+      let discovery = SigningDiscovery()
+      let signing = try await discovery.resolveSigning(
+        bundleId: bundleId,
+        platform: platform.platformName,
+        projectDirectory: projectURL,
+        config: config
+      )
+
+      args.append("--identity")
+      args.append(signing.identity.name)
+      args.append("--provisioning-profile")
+      args.append(signing.profile.path)
+      args.append("--entitlements")
+      args.append(signing.entitlementsPath)
+    } else if platform.requiresSigning {
+      return encodeJSON(RunResult(
+        success: false,
+        buildResult: BuildRunner.BuildResult(
+          success: false,
+          appPath: nil,
+          platform: platformStr,
+          configuration: configStr,
+          duration: 0,
+          warnings: [],
+          errors: [BuildRunner.BuildError(code: "SIGNING_REQUIRED", message: "Device builds require xclaude.toml with [signing] section")]
+        ),
+        deployResult: nil
+      ))
+    }
+
+    // Start async build (non-blocking)
+    let job = try await BuildManager.shared.startBuild(
+      projectPath: pathStr,
+      platform: platformStr,
+      configuration: configStr,
+      arguments: args,
+      swiftBundlerPath: bundlerPath
     )
 
-    guard buildResult.success, let appPath = buildResult.appPath else {
+    // Poll for completion (check every 500ms)
+    while job.status == .running {
+      try await Task.sleep(nanoseconds: 500_000_000) // 500ms
+    }
+
+    // Build completed - get result
+    let buildSuccess = job.status == .success
+    let buildOutput = job.readOutput()
+
+    // Find app path
+    let buildDir = projectURL.appendingPathComponent(".build/bundler")
+    let appPath: String?
+    if let contents = try? FileManager.default.contentsOfDirectory(at: buildDir, includingPropertiesForKeys: nil),
+       let appURL = contents.first(where: { $0.pathExtension == "app" }) {
+      appPath = appURL.path
+    } else {
+      appPath = nil
+    }
+
+    // Parse warnings/errors from build output
+    let warnings = buildOutput.filter { $0.contains("warning:") }
+    let errors: [BuildRunner.BuildError] = buildSuccess ? [] : [
+      BuildRunner.BuildError(code: "BUILD_FAILED", message: buildOutput.joined(separator: "\n"))
+    ]
+
+    let buildResult = BuildRunner.BuildResult(
+      success: buildSuccess,
+      appPath: appPath,
+      platform: platformStr,
+      configuration: configStr,
+      duration: job.duration,
+      warnings: warnings,
+      errors: errors
+    )
+
+    guard buildSuccess, let finalAppPath = appPath else {
       return encodeJSON(RunResult(
         success: false,
         buildResult: buildResult,
@@ -1283,19 +1410,21 @@ public enum MCPTools {
       ))
     }
 
+    // Post-process (compile asset catalog, etc.)
+    await postProcessBuild(job: job)
+
     // Get bundle ID from config
-    let config = try? XClaudeConfig.load(from: URL(fileURLWithPath: pathStr))
+    let config = try? XClaudeConfig.load(from: projectURL)
     let bundleId = config?.app.bundleId ?? "com.xclaude.app"
 
     // Handle platform-specific deployment
-    let platform = BuildRunner.Platform(rawValue: platformStr) ?? .iOSSimulator
     let deployResult: DeployRunner.DeployResult
 
     if platform == .macOS {
       // For macOS, just open the .app directly
       let process = Process()
       process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-      process.arguments = [appPath]
+      process.arguments = [finalAppPath]
       try process.run()
       process.waitUntilExit()
 
@@ -1303,7 +1432,7 @@ public enum MCPTools {
       deployResult = DeployRunner.DeployResult(
         success: launchSuccess,
         target: DeployRunner.TargetInfo(type: .simulator, udid: "local", name: "macOS (local)"),
-        appPath: appPath,
+        appPath: finalAppPath,
         bundleId: bundleId,
         launched: launchSuccess,
         error: launchSuccess ? nil : "Failed to launch app"
@@ -1315,14 +1444,14 @@ public enum MCPTools {
       switch target {
       case .simulator, .simulatorByName, .anyBootedSimulator:
         deployResult = try await DeployRunner.deployToSimulator(
-          appPath: appPath,
+          appPath: finalAppPath,
           bundleId: bundleId,
           target: target,
           launch: true
         )
       case .device, .deviceByName, .anyDevice:
         deployResult = try await DeployRunner.deployToDevice(
-          appPath: appPath,
+          appPath: finalAppPath,
           bundleId: bundleId,
           target: target,
           launch: true
