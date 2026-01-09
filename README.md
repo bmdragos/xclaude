@@ -25,6 +25,8 @@ mint install bmdragos/xclaude
 
 This installs both `xclaude` and `swift-bundler` to `~/.mint/bin/`.
 
+> **Note:** First install takes 3-5 minutes to compile dependencies. Subsequent updates are faster.
+
 ### Build from source
 
 ```bash
