@@ -263,6 +263,61 @@ Run `diagnose` to check your environment:
 - Icon presence
 - Signing status
 
+### "A valid provisioning profile was not found" (device install fails)
+
+This usually means one of:
+
+1. **Certificate not in profile**: The profile was created before your signing certificate existed
+   - Go to Apple Developer Portal → Profiles → Edit your profile
+   - Check your certificate is selected
+   - Regenerate and reinstall the profile
+
+2. **Device not in profile**: Your device isn't registered to the profile
+   - Check Portal → Devices for your device
+   - Device UDIDs differ between formats: `devicectl` shows CoreDevice UUID, Portal shows hardware UDID
+   - Both refer to the same device - use `xcrun devicectl device info details --device <udid>` to see hardware UDID
+
+3. **Entitlement mismatch**: App has entitlements the profile doesn't allow
+   - macOS sandbox entitlements (`com.apple.security.*`) don't work on iOS
+   - xclaude v3.1+ automatically strips these for iOS builds
+
+### Certificate shows in Xcode but not in keychain
+
+If Xcode shows your certificate but `security find-identity -v -p codesigning` doesn't:
+
+1. The private key wasn't saved when the cert was created
+2. **Fix**: In Xcode → Settings → Accounts → Manage Certificates, delete the cert and create a new one
+3. Or manually: Generate CSR in Keychain Access, upload to Portal, download and import the .cer
+
+### Multiple teams/certificates confusion
+
+Apple certificates embed the team ID in the Common Name (CN), but organizational certs may show a different team ID than the organization:
+
+```
+# Certificate might show:
+"Apple Development: Your Name (PERSONAL_TEAM_ID)"
+# But actually belong to:
+OU=ORGANIZATION_TEAM_ID
+```
+
+xclaude will match based on the provisioning profile's team. Use `discover_signing` to see all available identities and profiles.
+
+### Multi-platform apps (iOS + macOS)
+
+xclaude supports building for multiple platforms from the same project:
+
+```bash
+# Build for iOS
+build(platform: "iOS")
+
+# Build for macOS
+build(platform: "macOS")
+```
+
+Platform-specific entitlements are handled automatically:
+- macOS sandbox entitlements are stripped from iOS builds
+- Info.plist usage descriptions are added for iOS capabilities (camera, bluetooth, etc.)
+
 ## License
 
 MIT

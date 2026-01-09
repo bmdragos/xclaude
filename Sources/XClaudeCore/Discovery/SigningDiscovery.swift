@@ -406,7 +406,8 @@ extension SigningDiscovery {
     let entitlementsPath = try generateEntitlements(
       bundleId: bundleId,
       teamId: profile.teamId,
-      projectDirectory: projectDirectory
+      projectDirectory: projectDirectory,
+      platform: platform
     )
 
     return ResolvedSigning(
@@ -419,10 +420,12 @@ extension SigningDiscovery {
 
   /// Generate entitlements plist for code signing
   /// Merges required signing entitlements with any capability entitlements
+  /// Filters out platform-incompatible entitlements (e.g., macOS sandbox entitlements for iOS builds)
   public func generateEntitlements(
     bundleId: String,
     teamId: String,
-    projectDirectory: URL
+    projectDirectory: URL,
+    platform: String = "iOS"
   ) throws -> URL {
     let derivedDir = projectDirectory.appendingPathComponent(".xclaude/derived")
     try FileManager.default.createDirectory(at: derivedDir, withIntermediateDirectories: true)
@@ -435,6 +438,50 @@ extension SigningDiscovery {
        let data = try? Data(contentsOf: entitlementsPath),
        let existing = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
       entitlements = existing
+    }
+
+    // Filter out platform-incompatible entitlements
+    let isMacOS = platform.lowercased().contains("macos")
+    if !isMacOS {
+      // Remove macOS App Sandbox entitlements when building for iOS/tvOS/visionOS
+      // macOS App Sandbox entitlements - invalid on iOS
+      // These capabilities use Info.plist usage descriptions on iOS instead
+      let macOSOnlyEntitlements = [
+        // App Sandbox core
+        "com.apple.security.app-sandbox",
+        // Hardware access (use Info.plist on iOS)
+        "com.apple.security.device.bluetooth",
+        "com.apple.security.device.camera",
+        "com.apple.security.device.audio-input",
+        "com.apple.security.device.usb",
+        "com.apple.security.device.serial",
+        // Personal information (use Info.plist on iOS)
+        "com.apple.security.personal-information.location",
+        "com.apple.security.personal-information.addressbook",
+        "com.apple.security.personal-information.calendars",
+        "com.apple.security.personal-information.photos-library",
+        // Network
+        "com.apple.security.network.client",
+        "com.apple.security.network.server",
+        // Files
+        "com.apple.security.files.user-selected.read-only",
+        "com.apple.security.files.user-selected.read-write",
+        "com.apple.security.files.downloads.read-only",
+        "com.apple.security.files.downloads.read-write",
+        // Other macOS-only
+        "com.apple.security.print",
+        "com.apple.security.automation.apple-events",
+        // Code signing flags (macOS only)
+        "com.apple.security.cs.allow-jit",
+        "com.apple.security.cs.allow-unsigned-executable-memory",
+        "com.apple.security.cs.allow-dyld-environment-variables",
+        "com.apple.security.cs.disable-library-validation"
+      ]
+      for key in macOSOnlyEntitlements {
+        if entitlements.removeValue(forKey: key) != nil {
+          // Log that we removed an incompatible entitlement (silent for now)
+        }
+      }
     }
 
     // Add required signing entitlements

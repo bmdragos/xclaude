@@ -121,6 +121,43 @@ let data = Data(contentsOf: tempFile)
 ### 4. Silent error handling
 Avoid `try?` that swallows errors. Prefer explicit handling or at minimum log failures.
 
+### 5. Platform-specific entitlements (CRITICAL)
+macOS App Sandbox entitlements (`com.apple.security.*`) are **invalid for iOS** and will cause signing failures:
+- "A valid provisioning profile was not found" during device install
+- Profile verification fails because iOS profiles don't allow these entitlements
+
+**Solution**: `SigningDiscovery.generateEntitlements()` automatically strips these for non-macOS builds:
+```swift
+let macOSOnlyEntitlements = [
+  "com.apple.security.app-sandbox",
+  "com.apple.security.device.bluetooth",
+  "com.apple.security.network.client",
+  // ... see SigningDiscovery.swift for full list
+]
+```
+
+**Common trap**: Adding `bluetooth` capability for iOS. On macOS it's an entitlement, on iOS it's an Info.plist key (`NSBluetoothAlwaysUsageDescription`).
+
+### 6. Capability platform differences
+Many capabilities work differently across platforms:
+
+| Capability | macOS | iOS |
+|------------|-------|-----|
+| bluetooth | `com.apple.security.device.bluetooth` entitlement | `NSBluetoothAlwaysUsageDescription` Info.plist |
+| camera | `com.apple.security.device.camera` entitlement | `NSCameraUsageDescription` Info.plist |
+| location | `com.apple.security.personal-information.location` | `NSLocationWhenInUseUsageDescription` Info.plist |
+
+`ConfigUpdater.swift` handles this with the `platform` property on capabilities - check `.iOS`, `.macOS`, or `.both`.
+
+### 7. Provisioning profile troubleshooting
+Common "A valid provisioning profile was not found" causes:
+1. **Certificate not in profile**: Profile created before your signing cert existed → regenerate profile
+2. **Device not registered**: Your device UDID isn't in the profile → add device to Apple Portal, regenerate profile
+3. **Entitlement mismatch**: App has entitlements the profile doesn't allow → see pitfall #5
+4. **Wrong profile cached**: Delete `.build/` and rebuild
+
+**Device UDID confusion**: `devicectl` shows CoreDevice UUID (97452CCA-E01F-5542-...), but Apple Portal uses hardware UDID (00008130-000605841AE0...). Both refer to the same device.
+
 ## Adding New MCP Tools
 
 1. Add tool definition to `MCPTools.allTools` array:

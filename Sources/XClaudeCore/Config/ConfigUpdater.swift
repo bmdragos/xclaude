@@ -134,6 +134,7 @@ public struct CapabilityManager {
     public let capability: String
     public let entitlements: [String: String]?
     public let infoPlistAdditions: [String: String]?
+    public let platformWarning: String?
   }
 
   /// Known capabilities and their entitlements (iOS + macOS)
@@ -510,7 +511,7 @@ public struct CapabilityManager {
       case .audioInput:
         return "NSMicrophoneUsageDescription"
       case .location:
-        return "NSLocationUsageDescription"
+        return "NSLocationWhenInUseUsageDescription"  // Modern key (NSLocationUsageDescription deprecated in iOS 8)
       case .photos:
         return "NSPhotoLibraryUsageDescription"
       case .addressBook:
@@ -525,6 +526,8 @@ public struct CapabilityManager {
         return "NSSiriUsageDescription"
       case .nfc:
         return "NFCReaderUsageDescription"
+      case .bluetooth:
+        return "NSBluetoothAlwaysUsageDescription"
       default:
         return nil
       }
@@ -555,6 +558,8 @@ public struct CapabilityManager {
         return "This app uses Siri to provide voice commands."
       case .nfc:
         return "This app needs to read NFC tags."
+      case .bluetooth:
+        return "This app needs to communicate with Bluetooth devices."
       default:
         return nil
       }
@@ -577,11 +582,14 @@ public struct CapabilityManager {
            .increasedMemoryLimit, .extendedVirtualAddressing,
            .personalVPN, .familyControls, .mapsRouting:
         return .iOS
+      // Both platforms (different implementations)
+      case .bluetooth:  // iOS: Info.plist, macOS: entitlement
+        return .both
       // macOS only
       case .appleEvents, .hardenedRuntime, .allowJit, .allowUnsignedMemory,
            .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
            .filesDownloads, .systemExtension,
-           .networkClient, .networkServer, .bluetooth, .usb, .printing, .serialPort,
+           .networkClient, .networkServer, .usb, .printing, .serialPort,
            .appSandbox:
         return .macOS
       }
@@ -608,7 +616,8 @@ public struct CapabilityManager {
         message: "Unknown capability '\(capabilityName)'. Valid options: \(validCaps)",
         capability: capabilityName,
         entitlements: nil,
-        infoPlistAdditions: nil
+        infoPlistAdditions: nil,
+        platformWarning: nil
       )
     }
 
@@ -669,12 +678,19 @@ public struct CapabilityManager {
       infoPlistDict = [usageKey: value ?? usageDesc]
     }
 
+    // Generate platform warning for macOS-only capabilities
+    var platformWarning: String? = nil
+    if capability.platform == .macOS {
+      platformWarning = "'\(capabilityName)' is a macOS-only capability. It will be automatically removed when building for iOS/tvOS/visionOS."
+    }
+
     return CapabilityResult(
       success: true,
       message: "Added \(capability.description) capability",
       capability: capabilityName,
       entitlements: entitlementsDict,
-      infoPlistAdditions: infoPlistDict
+      infoPlistAdditions: infoPlistDict,
+      platformWarning: platformWarning
     )
   }
 
