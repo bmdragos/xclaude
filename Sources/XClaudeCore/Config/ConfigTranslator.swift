@@ -21,29 +21,133 @@ public struct ConfigTranslator {
     // Create derived directory
     try FileManager.default.createDirectory(at: derivedDir, withIntermediateDirectories: true)
 
-    // Generate Bundler.toml content
-    let content = generateBundlerTOML(config: config, projectDirectory: projectDirectory)
+    // Resolve icon path - check explicit config, then fallback to asset catalog
+    let resolvedIconPath = resolveIconPath(config: config, projectDirectory: projectDirectory, derivedDir: derivedDir)
+
+    // Generate Bundler.toml content with resolved icon
+    let content = generateBundlerTOML(config: config, projectDirectory: projectDirectory, iconPath: resolvedIconPath)
 
     // Write file
     try content.write(to: bundlerPath, atomically: true, encoding: .utf8)
 
-    // Also create symlink to icon if it exists (preserving original filename)
-    let iconSource = projectDirectory.appendingPathComponent(config.app.icon)
-    let iconFilename = (config.app.icon as NSString).lastPathComponent
-    let iconDest = derivedDir.appendingPathComponent(iconFilename)
+    // Create symlink to icon if it exists and isn't already in derived
+    if let iconPath = resolvedIconPath {
+      let iconSource = projectDirectory.appendingPathComponent(iconPath)
+      let iconFilename = (iconPath as NSString).lastPathComponent
+      let iconDest = derivedDir.appendingPathComponent(iconFilename)
 
-    if FileManager.default.fileExists(atPath: iconSource.path) {
-      // Remove existing symlink/file
-      try? FileManager.default.removeItem(at: iconDest)
-      // Create symlink
-      try FileManager.default.createSymbolicLink(at: iconDest, withDestinationURL: iconSource)
+      // Only create symlink if source is outside derived dir
+      if FileManager.default.fileExists(atPath: iconSource.path) &&
+         !iconSource.path.hasPrefix(derivedDir.path) {
+        try? FileManager.default.removeItem(at: iconDest)
+        try FileManager.default.createSymbolicLink(at: iconDest, withDestinationURL: iconSource)
+      }
     }
 
     return bundlerPath
   }
 
+  /// Resolve icon path - tries config path first, then falls back to asset catalog extraction
+  private static func resolveIconPath(config: XClaudeConfig, projectDirectory: URL, derivedDir: URL) -> String? {
+    // First, check if explicitly configured icon exists
+    let configuredIcon = projectDirectory.appendingPathComponent(config.app.icon)
+    if FileManager.default.fileExists(atPath: configuredIcon.path) {
+      return config.app.icon
+    }
+
+    // Try to extract from asset catalog
+    if let extractedPath = extractIconFromAssetCatalog(projectDirectory: projectDirectory, derivedDir: derivedDir) {
+      return extractedPath
+    }
+
+    return nil
+  }
+
+  /// Search for and extract icon from asset catalog
+  /// Returns relative path from project root if successful
+  private static func extractIconFromAssetCatalog(projectDirectory: URL, derivedDir: URL) -> String? {
+    // Search for AppIcon in asset catalogs
+    let searchPaths = [
+      "Sources/\(projectDirectory.lastPathComponent)/Resources/Assets.xcassets",
+      "Sources/Resources/Assets.xcassets",
+      "Resources/Assets.xcassets",
+      "Assets.xcassets"
+    ]
+
+    var assetCatalogPath: URL?
+
+    // Try known paths first
+    for relativePath in searchPaths {
+      let path = projectDirectory.appendingPathComponent(relativePath)
+      if FileManager.default.fileExists(atPath: path.path) {
+        assetCatalogPath = path
+        break
+      }
+    }
+
+    // If not found, search Sources directory
+    if assetCatalogPath == nil {
+      let sourcesDir = projectDirectory.appendingPathComponent("Sources")
+      if let enumerator = FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil) {
+        for case let fileURL as URL in enumerator {
+          if fileURL.pathExtension == "xcassets" {
+            assetCatalogPath = fileURL
+            break
+          }
+        }
+      }
+    }
+
+    guard let catalogPath = assetCatalogPath else { return nil }
+
+    // Look for AppIcon.appiconset
+    let appIconSet = catalogPath.appendingPathComponent("AppIcon.appiconset")
+    guard FileManager.default.fileExists(atPath: appIconSet.path) else { return nil }
+
+    // Read Contents.json to find the best icon
+    let contentsJson = appIconSet.appendingPathComponent("Contents.json")
+    guard let data = try? Data(contentsOf: contentsJson),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let images = json["images"] as? [[String: Any]] else {
+      return nil
+    }
+
+    // Find the best icon (prefer 1024x1024, any idiom)
+    var bestIcon: (filename: String, size: Int)?
+
+    for image in images {
+      guard let filename = image["filename"] as? String,
+            let sizeStr = image["size"] as? String else { continue }
+
+      // Parse size like "1024x1024"
+      let components = sizeStr.split(separator: "x")
+      guard let size = components.first.flatMap({ Int($0) }) else { continue }
+
+      if bestIcon == nil || size > bestIcon!.size {
+        bestIcon = (filename, size)
+      }
+    }
+
+    guard let icon = bestIcon else { return nil }
+
+    // Copy icon to derived folder as icon.png
+    let sourceIcon = appIconSet.appendingPathComponent(icon.filename)
+    let destIcon = derivedDir.appendingPathComponent("icon.png")
+
+    guard FileManager.default.fileExists(atPath: sourceIcon.path) else { return nil }
+
+    do {
+      try? FileManager.default.removeItem(at: destIcon)
+      try FileManager.default.copyItem(at: sourceIcon, to: destIcon)
+      // Return path relative to derived dir (which swift-bundler runs from)
+      return "icon.png"
+    } catch {
+      return nil
+    }
+  }
+
   /// Generate Bundler.toml content
-  private static func generateBundlerTOML(config: XClaudeConfig, projectDirectory: URL) -> String {
+  private static func generateBundlerTOML(config: XClaudeConfig, projectDirectory: URL, iconPath: String? = nil) -> String {
     var lines: [String] = []
 
     lines.append("# Generated by xclaude - DO NOT EDIT")
@@ -57,10 +161,9 @@ public struct ConfigTranslator {
     lines.append("product = \"\(config.app.name)\"")
     lines.append("version = \"\(config.app.version)\"")
 
-    // Check if icon exists - use the actual configured path
-    let iconPath = projectDirectory.appendingPathComponent(config.app.icon)
-    if FileManager.default.fileExists(atPath: iconPath.path) {
-      lines.append("icon = \"\(config.app.icon)\"")
+    // Use resolved icon path if provided
+    if let icon = iconPath {
+      lines.append("icon = \"\(icon)\"")
     }
 
     // Add Info.plist additions from capabilities (if present)

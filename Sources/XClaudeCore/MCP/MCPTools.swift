@@ -181,7 +181,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "deploy",
-      description: "Deploy an app to a device or simulator",
+      description: "Deploy an app to a device or simulator. Best for iOS physical devices - use after build for reliable device deployment.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -209,7 +209,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "run",
-      description: "Build and run an app (combines build + deploy)",
+      description: "Build and run an app (combines build + deploy). Works well for macOS and iOS Simulator. For iOS physical devices, prefer using build then deploy separately.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -1128,6 +1128,20 @@ public enum MCPTools {
         message: nil,
         error: "Device builds require xclaude.toml with [signing] section"
       ))
+    } else if platform == .macOS && projectType == .xclaude {
+      // For macOS, sign with entitlements if they exist (for capabilities like keychain, network)
+      let entitlementsPath = ConfigTranslator.derivedDirectory(for: projectURL)
+        .appendingPathComponent("Entitlements.plist")
+      if FileManager.default.fileExists(atPath: entitlementsPath.path) {
+        let config = try? XClaudeConfig.load(from: projectURL)
+        let identity = config?.signing?.identity ?? "Apple Development"
+
+        args.append("--codesign")
+        args.append("--identity")
+        args.append(identity)
+        args.append("--entitlements")
+        args.append(entitlementsPath.path)
+      }
     }
 
     // Start the build
@@ -1356,6 +1370,20 @@ public enum MCPTools {
         ),
         deployResult: nil
       ))
+    } else if platform == .macOS && projectType == .xclaude {
+      // For macOS, sign with entitlements if they exist (for capabilities like keychain, network)
+      let entitlementsPath = ConfigTranslator.derivedDirectory(for: projectURL)
+        .appendingPathComponent("Entitlements.plist")
+      if FileManager.default.fileExists(atPath: entitlementsPath.path) {
+        let config = try? XClaudeConfig.load(from: projectURL)
+        let identity = config?.signing?.identity ?? "Apple Development"
+
+        args.append("--codesign")
+        args.append("--identity")
+        args.append(identity)
+        args.append("--entitlements")
+        args.append(entitlementsPath.path)
+      }
     }
 
     // Start async build (non-blocking)
