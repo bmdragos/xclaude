@@ -38,23 +38,13 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Current Phase: Signing Discovery
+## Status: v3.0.0 Released
 
 - [x] Fork Swift Bundler
-- [x] Fix iOS app icons (completed Dec 23, 2024)
-- [ ] Implement signing discovery
-- [ ] Create MCP server targets
-
-## What Was Fixed (iOS Icons)
-
-**Problem:** iOS apps had no icons - wrong actool flags, wrong Info.plist entries.
-
-**Solution:**
-- `PlistCreator.swift`: Only add CFBundleIconFile/Name for macOS
-- `DarwinBundler.swift`: Added `compileAppIconForNonMac()` that:
-  1. Creates temp asset catalog with AppIcon.appiconset
-  2. Compiles with `actool --app-icon AppIcon --output-partial-info-plist`
-  3. Merges partial plist into Info.plist
+- [x] Fix iOS app icons
+- [x] Implement signing discovery
+- [x] Create MCP server (31 tools, 61 capabilities)
+- [x] Mint distribution (`mint install bmdragos/xclaude`)
 
 ## Key Files
 
