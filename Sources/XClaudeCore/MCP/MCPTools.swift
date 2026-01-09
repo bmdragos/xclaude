@@ -1993,7 +1993,9 @@ public enum MCPTools {
     let candidates = [
       ".build/debug/swift-bundler",
       ".build/release/swift-bundler",
-      "/usr/local/bin/swift-bundler"
+      "/usr/local/bin/swift-bundler",
+      "~/.mint/bin/swift-bundler",
+      "~/.local/bin/swift-bundler"
     ]
 
     for candidate in candidates {

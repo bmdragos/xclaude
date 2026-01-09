@@ -17,6 +17,14 @@ All without ever opening Xcode or creating an `.xcodeproj` file.
 
 ## Installation
 
+### Install via Mint (recommended)
+
+```bash
+mint install bmdragos/xclaude
+```
+
+This installs both `xclaude` and `swift-bundler` to `~/.mint/bin/`.
+
 ### Build from source
 
 ```bash
@@ -25,7 +33,7 @@ cd xclaude
 swift build -c release
 ```
 
-The binary will be at `.build/release/xclaude`.
+The binaries will be at `.build/release/xclaude` and `.build/release/swift-bundler`.
 
 ### Add to Claude Code
 
@@ -35,19 +43,19 @@ Add to your Claude Code MCP settings (`~/.claude/settings.json` or project `.cla
 {
   "mcpServers": {
     "xclaude": {
-      "command": "/path/to/xclaude"
+      "command": "~/.mint/bin/xclaude"
     }
   }
 }
 ```
 
-Or use the build directory directly:
+Or if you built from source:
 
 ```json
 {
   "mcpServers": {
     "xclaude": {
-      "command": "/Users/you/xclaude/.build/release/xclaude"
+      "command": "/path/to/xclaude/.build/release/xclaude"
     }
   }
 }
@@ -196,8 +204,9 @@ Run `configure_signing` to see available options and auto-apply the best match.
 
 ## Requirements
 
-- macOS with Xcode Command Line Tools
-- Swift 5.9+
+- macOS 13+
+- Xcode Command Line Tools
+- [Mint](https://github.com/yonaskolb/Mint) (for easy installation): `brew install mint`
 - For physical devices: Apple Developer account with provisioning profiles
 
 ## How It Works

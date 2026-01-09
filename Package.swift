@@ -4,8 +4,8 @@ import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
-  name: "swift-bundler",
-  platforms: [.macOS(.v10_15), .iOS(.v13), .tvOS(.v13), .macCatalyst(.v13)],
+  name: "xclaude",
+  platforms: [.macOS(.v13), .iOS(.v13), .tvOS(.v13), .macCatalyst(.v13)],
   products: [
     .executable(name: "swift-bundler", targets: ["swift-bundler"]),
     .executable(name: "xclaude", targets: ["xclaude"]),
