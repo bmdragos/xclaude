@@ -50,10 +50,110 @@ MyApp/
 
 | File | Purpose |
 |------|---------|
-| `Sources/SwiftBundler/Bundler/ResourceBundler.swift` | Asset catalog compilation (iOS icon fix) |
+| `Sources/XClaudeCore/MCP/MCPTools.swift` | All 31 MCP tool implementations (3800+ lines) |
+| `Sources/XClaudeCore/MCP/MCPServer.swift` | JSON-RPC 2.0 server |
+| `Sources/XClaudeCore/Build/BuildRunner.swift` | Synchronous builds via swift-bundler |
+| `Sources/XClaudeCore/Build/BuildManager.swift` | Async builds with buffered output |
+| `Sources/XClaudeCore/Deploy/DeployRunner.swift` | Simulator/device deployment |
+| `Sources/XClaudeCore/Discovery/SigningDiscovery.swift` | Keychain + profile discovery |
+| `Sources/XClaudeCore/Config/XClaudeConfig.swift` | xclaude.toml parsing |
+| `Sources/SwiftBundler/Bundler/ResourceBundler.swift` | Asset catalog compilation |
 | `Sources/SwiftBundler/Bundler/DarwinBundler.swift` | macOS/iOS bundling |
-| `Sources/SwiftBundler/Bundler/CodeSigner/CodeSigner.swift` | Code signing |
-| `Sources/SwiftBundler/Configuration/` | Config parsing |
+
+## XClaudeCore Architecture (the MCP layer)
+
+```
+Sources/XClaudeCore/
+├── MCP/
+│   ├── MCPServer.swift     # JSON-RPC 2.0 server, tool dispatch
+│   └── MCPTools.swift      # All 31 tools (LARGE - consider splitting)
+├── Build/
+│   ├── BuildRunner.swift   # Sync builds, asset catalog compilation
+│   └── BuildManager.swift  # Async builds with job tracking
+├── Deploy/
+│   └── DeployRunner.swift  # simctl/devicectl deployment
+├── Discovery/
+│   └── SigningDiscovery.swift  # Keychain + profile parsing
+├── Config/
+│   ├── XClaudeConfig.swift     # xclaude.toml → struct
+│   ├── ConfigTranslator.swift  # → Bundler.toml generation
+│   └── ConfigUpdater.swift     # In-place updates
+├── Project/
+│   └── ProjectScaffold.swift   # New project templates
+└── Cache/
+    └── GlobalCache.swift       # ~/.xclaude/ with TTLs
+```
+
+### Build Modes
+- **Sync** (`build` tool): `BuildRunner.build()` blocks until complete
+- **Async** (`build_start/status/logs/cancel`): `BuildManager` returns job ID immediately
+
+### Post-Build Processing
+After successful builds, xclaude automatically:
+1. Finds `.xcassets` in project
+2. Runs `xcrun actool` to compile asset catalog (fixes app icon)
+3. Updates Info.plist with icon metadata
+4. Re-signs the app if needed
+
+## Common Pitfalls
+
+### 1. devicectl requires file path for JSON output
+```swift
+// WRONG - -j requires a path argument, not just the flag
+runCommand("devicectl", ["list", "devices", "-j"])
+
+// CORRECT - write to temp file, then read
+let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("devices.json")
+runCommand("devicectl", ["list", "devices", "-j", tempFile.path])
+let data = Data(contentsOf: tempFile)
+```
+
+### 2. Target parsing defaults
+- Explicit UDIDs → default to **device** (users pass UDIDs for physical devices)
+- Names → default to **simulator** (common dev workflow)
+- Use prefixes for explicit control: `device:UDID` or `simulator:UDID`
+
+### 3. Config file handling
+- xclaude.toml → translated to `.xclaude/derived/Bundler.toml`
+- Use `--config-file` flag to avoid overwriting existing Bundler.toml
+- Never modify user's root Bundler.toml directly
+
+### 4. Silent error handling
+Avoid `try?` that swallows errors. Prefer explicit handling or at minimum log failures.
+
+## Adding New MCP Tools
+
+1. Add tool definition to `MCPTools.allTools` array:
+```swift
+MCPTool(
+  name: "my_tool",
+  description: "Does something useful",
+  inputSchema: [
+    "type": "object",
+    "properties": ["param": ["type": "string"]],
+    "required": ["param"]
+  ]
+)
+```
+
+2. Add case to `MCPTools.callTool()` switch
+3. Implement static function returning JSON via `encodeJSON()`
+
+## Caching (GlobalCache)
+
+Stores expensive discovery results in `~/.xclaude/`:
+- **Signing**: 5 min TTL
+- **Simulators**: 1 min TTL
+- **Devices**: 30 sec TTL
+
+Force refresh: `forceRefresh: true`
+
+## Testing Changes
+
+1. `swift build -c release --product xclaude`
+2. In Claude Code: `/mcp` to reconnect
+3. `get_version` to verify new binary loaded
+4. Test affected tools
 
 ## Swift Bundler Architecture (the engine)
 

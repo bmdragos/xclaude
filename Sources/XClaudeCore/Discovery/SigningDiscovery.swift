@@ -322,8 +322,16 @@ extension SigningDiscovery {
       return match
     }
 
-    // Prefer development certificates over distribution
-    if let dev = teamIdentities.first(where: { $0.name.contains("Development") }) {
+    // Prefer Apple Development certificates (for iOS device builds)
+    // Note: "Developer ID Application" is for macOS distribution, NOT iOS development
+    if let dev = teamIdentities.first(where: { $0.name.hasPrefix("Apple Development") }) {
+      return dev
+    }
+
+    // Fall back to any development certificate (but not "Developer ID")
+    if let dev = teamIdentities.first(where: {
+      $0.name.contains("Development") && !$0.name.contains("Developer ID")
+    }) {
       return dev
     }
 

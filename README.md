@@ -115,13 +115,14 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 ## Features
 
-### 31 MCP Tools
+### 35 MCP Tools
 
 | Category | Tools |
 |----------|-------|
 | **Project** | `create_project`, `init_project`, `get_config`, `update_config` |
 | **Signing** | `discover_signing`, `get_signing_status`, `configure_signing` |
-| **Build** | `build`, `deploy`, `run`, `watch`, `stop_watch` |
+| **Build** | `build`, `build_start`, `build_status`, `build_logs`, `build_cancel` |
+| **Deploy** | `deploy`, `run`, `watch`, `stop_watch` |
 | **Devices** | `list_simulators`, `list_devices`, `reset_simulator` |
 | **Debug** | `screenshot`, `get_logs`, `get_crash_logs`, `diagnose` |
 | **Test** | `test` |
@@ -130,6 +131,18 @@ Most projects only need the app name. Everything else is auto-discovered.
 | **Distribution** | `archive`, `validate`, `upload` |
 | **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
 | **Info** | `get_version` |
+
+### Async Builds
+
+For long-running builds, use the async pattern:
+
+```
+build_start(platform: "iOS")     → { job_id: "build-1" }
+build_status(job_id: "build-1")  → { status: "running", duration: 45.2 }
+build_logs(job_id: "build-1")    → { lines: [...], status: "success" }
+```
+
+This returns immediately and lets you poll for progress, similar to CI/CD job patterns.
 
 ### Example Workflows
 

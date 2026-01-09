@@ -110,6 +110,76 @@ public enum MCPTools {
       ]
     ),
     Tool(
+      name: "build_start",
+      description: "Start a build in background. Returns immediately with job ID. Use build_logs to check progress.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "platform": [
+            "type": "string",
+            "description": "Target platform (iOS, iOSSimulator, macOS, etc.)",
+            "default": "iOSSimulator"
+          ],
+          "configuration": [
+            "type": "string",
+            "description": "Build configuration (debug or release)",
+            "default": "debug"
+          ],
+          "path": [
+            "type": "string",
+            "description": "Path to the project directory"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "build_status",
+      description: "Check status of a build job. Returns running/success/failed status.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "job_id": [
+            "type": "string",
+            "description": "Build job ID (from build_start). If omitted, shows all recent jobs."
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "build_logs",
+      description: "Read buffered build output. Non-blocking - returns immediately with available output.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "job_id": [
+            "type": "string",
+            "description": "Build job ID (from build_start)"
+          ],
+          "lines": [
+            "type": "integer",
+            "description": "Number of recent lines to return (default: all buffered, clears buffer)"
+          ]
+        ] as [String: Any],
+        "required": ["job_id"] as [String]
+      ]
+    ),
+    Tool(
+      name: "build_cancel",
+      description: "Cancel a running build job.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "job_id": [
+            "type": "string",
+            "description": "Build job ID to cancel"
+          ]
+        ] as [String: Any],
+        "required": ["job_id"] as [String]
+      ]
+    ),
+    Tool(
       name: "deploy",
       description: "Deploy an app to a device or simulator",
       inputSchema: [
@@ -652,6 +722,14 @@ public enum MCPTools {
         return try await listDevices()
       case "build":
         return try await build(arguments: arguments)
+      case "build_start":
+        return try await buildStart(arguments: arguments)
+      case "build_status":
+        return try await buildStatus(arguments: arguments)
+      case "build_logs":
+        return try await buildLogs(arguments: arguments)
+      case "build_cancel":
+        return try await buildCancel(arguments: arguments)
       case "deploy":
         return try await deploy(arguments: arguments)
       case "run":
@@ -810,14 +888,19 @@ public enum MCPTools {
 
   static func listDevices() async throws -> String {
     // Use devicectl for connected devices (macOS 14+)
-    let output = try await runCommand("/usr/bin/xcrun", arguments: ["devicectl", "list", "devices", "-j"])
+    // devicectl requires -j <path> to write JSON to a file
+    let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("devices-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tempFile) }
 
-    guard let data = output.data(using: .utf8),
+    _ = try await runCommand("/usr/bin/xcrun", arguments: ["devicectl", "list", "devices", "-j", tempFile.path])
+
+    guard let data = try? Data(contentsOf: tempFile),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let result = json["result"] as? [String: Any],
           let devices = result["devices"] as? [[String: Any]] else {
-      // Fall back to raw output if parsing fails
-      return output
+      // Fall back to text output if parsing fails
+      let textOutput = try await runCommand("/usr/bin/xcrun", arguments: ["devicectl", "list", "devices"])
+      return textOutput
     }
 
     var results: [DeviceInfo] = []
@@ -877,6 +960,272 @@ public enum MCPTools {
     )
 
     return encodeJSON(result)
+  }
+
+  // MARK: - Async Build Response Types
+
+  struct BuildStartResult: Codable {
+    let success: Bool
+    let jobId: String?
+    let message: String?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+      case success, error, message
+      case jobId = "job_id"
+    }
+  }
+
+  struct BuildLogsResult: Codable {
+    let jobId: String
+    let status: String
+    let lines: [String]
+    let bufferedRemaining: Int
+
+    enum CodingKeys: String, CodingKey {
+      case status, lines
+      case jobId = "job_id"
+      case bufferedRemaining = "buffered_remaining"
+    }
+  }
+
+  struct BuildCancelResult: Codable {
+    let success: Bool
+    let message: String
+  }
+
+  struct BuildJobsResult: Codable {
+    let jobs: [BuildJobInfo]
+  }
+
+  struct BuildErrorResult: Codable {
+    let success: Bool
+    let error: String
+  }
+
+  // MARK: - Async Build Tools
+
+  /// Track jobs that have been post-processed (asset catalog compiled)
+  private static var postProcessedJobs: Set<String> = []
+  private static let postProcessLock = NSLock()
+
+  /// Post-process a completed build (compile asset catalog, re-sign)
+  private static func postProcessBuild(job: BuildJob) async {
+    // Check if already processed
+    postProcessLock.lock()
+    if postProcessedJobs.contains(job.id) {
+      postProcessLock.unlock()
+      return
+    }
+    postProcessedJobs.insert(job.id)
+    postProcessLock.unlock()
+
+    // Only process successful builds
+    guard job.status == .success else { return }
+
+    let projectURL = URL(fileURLWithPath: job.projectPath)
+    guard let platform = BuildRunner.Platform(rawValue: job.platform) else { return }
+
+    // Find the built app
+    let buildDir = projectURL.appendingPathComponent(".build/bundler")
+    guard let contents = try? FileManager.default.contentsOfDirectory(at: buildDir, includingPropertiesForKeys: nil),
+          let appURL = contents.first(where: { $0.pathExtension == "app" }) else {
+      return
+    }
+
+    // Resolve signing info if needed
+    var signing: SigningDiscovery.ResolvedSigning? = nil
+    if platform.requiresSigning {
+      let config = try? XClaudeConfig.load(from: projectURL)
+      let bundleId = config?.app.bundleId ?? "com.example.app"
+      let discovery = SigningDiscovery()
+      signing = try? await discovery.resolveSigning(
+        bundleId: bundleId,
+        platform: platform.platformName,
+        projectDirectory: projectURL,
+        config: config
+      )
+    }
+
+    // Compile asset catalog
+    try? await BuildRunner.compileAssetCatalog(
+      appPath: appURL.path,
+      projectDirectory: projectURL,
+      platform: platform,
+      signing: signing
+    )
+  }
+
+  static func buildStart(arguments: [String: Any]) async throws -> String {
+    let platformStr = arguments["platform"] as? String ?? "iOSSimulator"
+    let configStr = arguments["configuration"] as? String ?? "debug"
+    let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
+
+    guard let platform = BuildRunner.Platform(rawValue: platformStr) else {
+      return encodeJSON(BuildStartResult(
+        success: false,
+        jobId: nil,
+        message: nil,
+        error: "Invalid platform: \(platformStr)"
+      ))
+    }
+
+    let projectURL = URL(fileURLWithPath: pathStr)
+
+    // Detect project type and prepare config
+    let projectType = ConfigTranslator.detectProjectType(at: projectURL)
+
+    var configFileArg: String? = nil
+    if projectType == .xclaude {
+      let config = try XClaudeConfig.load(from: projectURL)
+      let configPath = try ConfigTranslator.translate(config: config, projectDirectory: projectURL)
+      configFileArg = configPath.path
+    }
+
+    // Find swift-bundler
+    guard let bundlerPath = findSwiftBundler() else {
+      return encodeJSON(BuildStartResult(
+        success: false,
+        jobId: nil,
+        message: nil,
+        error: "swift-bundler not found"
+      ))
+    }
+
+    // Build arguments
+    var args = ["bundle", "-p", platformStr, "-c", configStr]
+    args.append("--directory")
+    args.append(pathStr)
+
+    if let configFile = configFileArg {
+      args.append("--config-file")
+      args.append(configFile)
+    }
+
+    // Resolve signing for device builds (xclaude projects only)
+    if platform.requiresSigning && projectType == .xclaude {
+      let config = try? XClaudeConfig.load(from: projectURL)
+      let bundleId = config?.app.bundleId ?? "com.example.app"
+
+      let discovery = SigningDiscovery()
+      let signing = try await discovery.resolveSigning(
+        bundleId: bundleId,
+        platform: platform.platformName,
+        projectDirectory: projectURL,
+        config: config
+      )
+
+      args.append("--identity")
+      args.append(signing.identity.name)
+      args.append("--provisioning-profile")
+      args.append(signing.profile.path)
+      args.append("--entitlements")
+      args.append(signing.entitlementsPath)
+    } else if platform.requiresSigning {
+      return encodeJSON(BuildStartResult(
+        success: false,
+        jobId: nil,
+        message: nil,
+        error: "Device builds require xclaude.toml with [signing] section"
+      ))
+    }
+
+    // Start the build
+    let job = try await BuildManager.shared.startBuild(
+      projectPath: pathStr,
+      platform: platformStr,
+      configuration: configStr,
+      arguments: args,
+      swiftBundlerPath: bundlerPath
+    )
+
+    return encodeJSON(BuildStartResult(
+      success: true,
+      jobId: job.id,
+      message: "Build started. Use build_logs to check progress.",
+      error: nil
+    ))
+  }
+
+  static func buildStatus(arguments: [String: Any]) async throws -> String {
+    if let jobId = arguments["job_id"] as? String {
+      guard let job = await BuildManager.shared.getJob(jobId) else {
+        return encodeJSON(BuildErrorResult(success: false, error: "Job not found: \(jobId)"))
+      }
+      // Post-process if build just succeeded
+      if job.status == .success {
+        await postProcessBuild(job: job)
+      }
+      return encodeJSON(BuildJobInfo(from: job))
+    } else {
+      // Return all recent jobs
+      let jobs = await BuildManager.shared.recentJobs()
+      // Post-process any successful builds
+      for job in jobs where job.status == .success {
+        await postProcessBuild(job: job)
+      }
+      let infos = jobs.map { BuildJobInfo(from: $0) }
+      return encodeJSON(BuildJobsResult(jobs: infos))
+    }
+  }
+
+  static func buildLogs(arguments: [String: Any]) async throws -> String {
+    guard let jobId = arguments["job_id"] as? String else {
+      throw ToolError.missingArgument("job_id")
+    }
+
+    guard let job = await BuildManager.shared.getJob(jobId) else {
+      return encodeJSON(BuildErrorResult(success: false, error: "Job not found: \(jobId)"))
+    }
+
+    let lines = arguments["lines"] as? Int
+    let output = job.readOutput(count: lines)
+
+    return encodeJSON(BuildLogsResult(
+      jobId: jobId,
+      status: job.status.rawValue,
+      lines: output,
+      bufferedRemaining: job.bufferedLineCount
+    ))
+  }
+
+  static func buildCancel(arguments: [String: Any]) async throws -> String {
+    guard let jobId = arguments["job_id"] as? String else {
+      throw ToolError.missingArgument("job_id")
+    }
+
+    let cancelled = await BuildManager.shared.cancel(jobId)
+    return encodeJSON(BuildCancelResult(
+      success: cancelled,
+      message: cancelled ? "Build cancelled" : "Job not found or already completed"
+    ))
+  }
+
+  private static func findSwiftBundler() -> String? {
+    // Check next to xclaude executable first
+    if let execPath = Bundle.main.executablePath {
+      let execDir = URL(fileURLWithPath: execPath).deletingLastPathComponent()
+      let siblingPath = execDir.appendingPathComponent("swift-bundler").path
+      if FileManager.default.isExecutableFile(atPath: siblingPath) {
+        return siblingPath
+      }
+    }
+
+    let candidates = [
+      ".build/debug/swift-bundler",
+      ".build/release/swift-bundler",
+      "/usr/local/bin/swift-bundler",
+      NSString(string: "~/.mint/bin/swift-bundler").expandingTildeInPath,
+      NSString(string: "~/.local/bin/swift-bundler").expandingTildeInPath
+    ]
+
+    for candidate in candidates {
+      if FileManager.default.isExecutableFile(atPath: candidate) {
+        return candidate
+      }
+    }
+
+    return nil
   }
 
   static func deploy(arguments: [String: Any]) async throws -> String {

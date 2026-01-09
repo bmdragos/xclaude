@@ -113,37 +113,14 @@ public struct BuildRunner {
     // Detect project type and setup config
     let projectType = ConfigTranslator.detectProjectType(at: projectDirectory)
 
-    // Track if we need to clean up generated Bundler.toml
-    var needsCleanup = false
-    let bundlerTomlPath = projectDirectory.appendingPathComponent("Bundler.toml")
-    let backupPath = projectDirectory.appendingPathComponent("Bundler.toml.xclaude-backup")
-
-    // Ensure cleanup happens even if we throw
-    defer {
-      if needsCleanup {
-        try? FileManager.default.removeItem(at: bundlerTomlPath)
-        if FileManager.default.fileExists(atPath: backupPath.path) {
-          try? FileManager.default.moveItem(at: backupPath, to: bundlerTomlPath)
-        }
-      }
-    }
+    // Path to generated config (only used for xclaude projects)
+    var generatedConfigPath: URL? = nil
 
     switch projectType {
     case .xclaude:
-      // Load and translate config - generate Bundler.toml directly in project root
+      // Load and translate config - generate Bundler.toml in .xclaude/derived/
       let config = try XClaudeConfig.load(from: projectDirectory)
-
-      // Backup existing Bundler.toml if present
-      if FileManager.default.fileExists(atPath: bundlerTomlPath.path) {
-        try? FileManager.default.removeItem(at: backupPath)
-        try? FileManager.default.moveItem(at: bundlerTomlPath, to: backupPath)
-      }
-
-      // Generate Bundler.toml in project root
-      let configPath = try ConfigTranslator.translate(config: config, projectDirectory: projectDirectory)
-      try? FileManager.default.removeItem(at: bundlerTomlPath)
-      try FileManager.default.copyItem(at: configPath, to: bundlerTomlPath)
-      needsCleanup = true
+      generatedConfigPath = try ConfigTranslator.translate(config: config, projectDirectory: projectDirectory)
 
     case .swiftBundler:
       // Use existing Bundler.toml directly
@@ -170,9 +147,10 @@ public struct BuildRunner {
       )
     }
 
-    // Resolve signing if required
+    // Resolve signing if required (only for xclaude projects)
+    // For swiftBundler projects, let swift-bundler handle signing (user must pass flags manually)
     var resolvedSigning: SigningDiscovery.ResolvedSigning? = nil
-    if platform.requiresSigning {
+    if platform.requiresSigning && projectType == .xclaude {
       let config = try? XClaudeConfig.load(from: projectDirectory)
       let bundleId = config?.app.bundleId ?? "com.example.app"
 
@@ -195,11 +173,27 @@ public struct BuildRunner {
           errors: [BuildError(
             code: "SIGNING_REQUIRED",
             message: "Device builds require code signing: \(error.localizedDescription)",
-            suggestion: "Run discover_signing to find available identities and profiles",
+            suggestion: "Create xclaude.toml with [signing] section, or use swift-bundler directly with --identity and --provisioning-profile flags",
             fixable: true
           )]
         )
       }
+    } else if platform.requiresSigning && projectType == .swiftBundler {
+      // For swiftBundler projects, warn that signing isn't auto-configured
+      return BuildResult(
+        success: false,
+        appPath: nil,
+        platform: platform.rawValue,
+        configuration: configuration.rawValue,
+        duration: Date().timeIntervalSince(startTime),
+        warnings: [],
+        errors: [BuildError(
+          code: "SIGNING_NOT_CONFIGURED",
+          message: "This project uses Bundler.toml. xclaude cannot auto-configure signing for device builds.",
+          suggestion: "Create xclaude.toml with [signing] section for auto-signing, or use swift-bundler directly with --identity and --provisioning-profile flags",
+          fixable: true
+        )]
+      )
     }
 
     // Find swift-bundler executable
@@ -226,6 +220,12 @@ public struct BuildRunner {
     var arguments = ["bundle", "-p", platform.rawValue, "-c", configuration.rawValue]
     arguments.append("--directory")
     arguments.append(projectDirectory.path)
+
+    // Use generated config file for xclaude projects (avoids overwriting existing Bundler.toml)
+    if let configPath = generatedConfigPath {
+      arguments.append("--config-file")
+      arguments.append(configPath.path)
+    }
 
     // Add signing arguments if resolved
     if let signing = resolvedSigning {
@@ -260,8 +260,6 @@ public struct BuildRunner {
       currentDirectory: projectDirectory
     )
 
-    // Note: Cleanup is handled by defer block at top of function
-
     let duration = Date().timeIntervalSince(startTime)
 
     // Parse output
@@ -271,6 +269,16 @@ public struct BuildRunner {
     var appPath: String? = nil
     if exitCode == 0 {
       appPath = findBuiltApp(in: projectDirectory, appName: detectAppName(from: projectDirectory))
+
+      // Compile asset catalog (fixes app icon issue with swift-bundler)
+      if let appPath = appPath {
+        try? await compileAssetCatalog(
+          appPath: appPath,
+          projectDirectory: projectDirectory,
+          platform: platform,
+          signing: resolvedSigning
+        )
+      }
     }
 
     // Build signing info for result
@@ -444,5 +452,126 @@ public struct BuildRunner {
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     return String(data: data, encoding: .utf8) ?? ""
+  }
+
+  // MARK: - Asset Catalog Compilation
+
+  /// Compile asset catalog and update app bundle (fixes app icon issue with swift-bundler)
+  /// Public so it can be called from async build completion
+  public static func compileAssetCatalog(
+    appPath: String,
+    projectDirectory: URL,
+    platform: Platform,
+    signing: SigningDiscovery.ResolvedSigning?
+  ) async throws {
+    let appURL = URL(fileURLWithPath: appPath)
+
+    // Find asset catalog in common locations
+    let possibleAssetPaths = [
+      "Sources/\(appURL.deletingPathExtension().lastPathComponent)/Resources/Assets.xcassets",
+      "Sources/Resources/Assets.xcassets",
+      "Resources/Assets.xcassets",
+      "Assets.xcassets"
+    ]
+
+    var assetCatalogPath: URL?
+    for relativePath in possibleAssetPaths {
+      let fullPath = projectDirectory.appendingPathComponent(relativePath)
+      if FileManager.default.fileExists(atPath: fullPath.path) {
+        assetCatalogPath = fullPath
+        break
+      }
+    }
+
+    // Also search for any .xcassets in Sources directory
+    if assetCatalogPath == nil {
+      let sourcesDir = projectDirectory.appendingPathComponent("Sources")
+      if let enumerator = FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil) {
+        for case let fileURL as URL in enumerator {
+          if fileURL.pathExtension == "xcassets" {
+            assetCatalogPath = fileURL
+            break
+          }
+        }
+      }
+    }
+
+    guard let assetsPath = assetCatalogPath else {
+      // No asset catalog found, nothing to do
+      return
+    }
+
+    // Determine platform string for actool
+    let actoolPlatform: String
+    let minDeploymentTarget: String
+    switch platform {
+    case .iOS, .iOSSimulator:
+      actoolPlatform = platform == .iOS ? "iphoneos" : "iphonesimulator"
+      minDeploymentTarget = "17.0"
+    case .macOS:
+      actoolPlatform = "macosx"
+      minDeploymentTarget = "14.0"
+    case .tvOS, .tvOSSimulator:
+      actoolPlatform = platform == .tvOS ? "appletvos" : "appletvsimulator"
+      minDeploymentTarget = "17.0"
+    case .visionOS, .visionOSSimulator:
+      actoolPlatform = platform == .visionOS ? "xros" : "xrsimulator"
+      minDeploymentTarget = "1.0"
+    }
+
+    // Create temp file for partial info plist
+    let tempInfoPlist = FileManager.default.temporaryDirectory
+      .appendingPathComponent("assetcatalog_generated_info_\(UUID().uuidString).plist")
+    defer { try? FileManager.default.removeItem(at: tempInfoPlist) }
+
+    // Compile asset catalog
+    let actoolArgs = [
+      "actool", assetsPath.path,
+      "--compile", appPath,
+      "--platform", actoolPlatform,
+      "--minimum-deployment-target", minDeploymentTarget,
+      "--app-icon", "AppIcon",
+      "--output-partial-info-plist", tempInfoPlist.path
+    ]
+
+    let (actoolExit, _, actoolErr) = try await runProcess(
+      "/usr/bin/xcrun",
+      arguments: actoolArgs,
+      currentDirectory: projectDirectory
+    )
+
+    guard actoolExit == 0 else {
+      // Asset catalog compilation failed, but don't fail the whole build
+      // Just log and continue
+      return
+    }
+
+    // Update Info.plist with icon info
+    let infoPlistPath = appURL.appendingPathComponent("Info.plist")
+    if FileManager.default.fileExists(atPath: infoPlistPath.path) &&
+       FileManager.default.fileExists(atPath: tempInfoPlist.path) {
+      // Remove old icon keys and merge new ones
+      _ = try? runProcessSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Delete :CFBundleIconFile", infoPlistPath.path])
+      _ = try? runProcessSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Delete :CFBundleIconName", infoPlistPath.path])
+      _ = try? runProcessSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Merge \(tempInfoPlist.path)", infoPlistPath.path])
+    }
+
+    // Re-sign the app if we have signing info
+    if let signing = signing {
+      let entitlementsPath = signing.entitlementsPath
+      _ = try await runProcess(
+        "/usr/bin/codesign",
+        arguments: [
+          "--force",
+          "--sign", signing.identity.name,
+          "--entitlements", entitlementsPath,
+          appPath
+        ],
+        currentDirectory: projectDirectory
+      )
+    }
   }
 }

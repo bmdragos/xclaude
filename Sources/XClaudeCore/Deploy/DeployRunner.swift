@@ -51,7 +51,31 @@ public struct DeployRunner {
     case anyDevice
 
     /// Parse target string from MCP argument
+    /// Supports prefixes: "device:<udid>", "simulator:<udid>", or just keywords "device"/"simulator"
     public static func parse(_ string: String) -> Target {
+      // Check for explicit prefixes first
+      if string.lowercased().hasPrefix("device:") {
+        let value = String(string.dropFirst(7))
+        if value.isEmpty {
+          return .anyDevice
+        } else if value.contains("-") || (value.count == 40 && value.allSatisfy({ $0.isHexDigit })) {
+          return .device(udid: value)
+        } else {
+          return .deviceByName(name: value)
+        }
+      }
+
+      if string.lowercased().hasPrefix("simulator:") {
+        let value = String(string.dropFirst(10))
+        if value.isEmpty {
+          return .anyBootedSimulator
+        } else if value.contains("-") || (value.count == 40 && value.allSatisfy({ $0.isHexDigit })) {
+          return .simulator(udid: value)
+        } else {
+          return .simulatorByName(name: value)
+        }
+      }
+
       switch string.lowercased() {
       case "simulator":
         return .anyBootedSimulator
@@ -60,10 +84,11 @@ public struct DeployRunner {
       default:
         // Check if it looks like a UDID (contains dashes or is 40 hex chars)
         if string.contains("-") || (string.count == 40 && string.allSatisfy({ $0.isHexDigit })) {
-          // Could be simulator or device UDID - try to detect
-          return .simulator(udid: string)  // Default to simulator, will try device if fails
+          // Could be simulator or device UDID - default to device for explicit UDIDs
+          // (users typically pass explicit UDIDs when targeting physical devices)
+          return .device(udid: string)
         } else {
-          // Assume it's a name
+          // Assume it's a name - try simulator first
           return .simulatorByName(name: string)
         }
       }
@@ -293,9 +318,13 @@ public struct DeployRunner {
   }
 
   private static func listDevices() async throws -> [DeviceInfo] {
-    let output = try await runCommand("/usr/bin/xcrun", arguments: ["devicectl", "list", "devices", "-j"])
+    // devicectl requires -j <path> to write JSON to a file
+    let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("devices-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: tempFile) }
 
-    guard let data = output.data(using: .utf8),
+    _ = try await runCommand("/usr/bin/xcrun", arguments: ["devicectl", "list", "devices", "-j", tempFile.path])
+
+    guard let data = try? Data(contentsOf: tempFile),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let result = json["result"] as? [String: Any],
           let devices = result["devices"] as? [[String: Any]] else {
