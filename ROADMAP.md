@@ -169,6 +169,11 @@ stop_device_logs(session_id)   → { lines: [...] }
 
 ## Completed
 
+### v4.0.0 (End-to-End Release)
+- [x] All v3.10.0 features
+- [x] Upload tool error detection (altool can print ERROR: with exit code 0)
+- [x] End-to-end verified: Build → Sign → Archive → Validate → Upload to TestFlight
+
 ### v3.10.0
 - [x] Dev ↔ Distribution workflow improvements:
   - `upload` tool auto-uses ASC credentials from `asc_configure`

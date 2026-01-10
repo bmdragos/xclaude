@@ -15,6 +15,16 @@ xclaude is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) s
 
 All without ever opening Xcode or creating an `.xcodeproj` file.
 
+## What's New in v4.0.0
+
+**End-to-end App Store workflow now works!** Build → Sign → Archive → Validate → Upload to TestFlight, all from Claude.
+
+- **Dev ↔ Distribution switching**: Dual signing config (`[signing.iOS.development]` and `[signing.iOS.distribution]`), automatic profile type detection
+- **Proper IPA signing**: Fixed AppleDouble resource fork contamination that broke code signatures
+- **Device family targeting**: `devices = ["iphone"]` in xclaude.toml correctly sets UIDeviceFamily
+- **Better error handling**: Upload tool now properly detects altool errors even when exit code is 0
+- **Profile name collision fix**: Profiles filtered by team ID and type, not just display name
+
 ## Installation
 
 ### Install via Mint (recommended)

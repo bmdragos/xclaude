@@ -38,7 +38,9 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Status: v3.9.0 Released
+## Status: v4.0.0 Released
+
+**End-to-end working**: Build → Sign → Archive → Validate → Upload to TestFlight
 
 - [x] Fork Swift Bundler
 - [x] Fix iOS app icons
@@ -49,6 +51,9 @@ MyApp/
 - [x] Clean entitlements architecture (regenerated fresh per build)
 - [x] Multi-team signing support (team ID from certificate OU field)
 - [x] App Store Connect API integration (24 tools for devices, profiles, certificates, TestFlight)
+- [x] Dev ↔ Distribution workflow (dual signing, profile type detection, team filtering)
+- [x] Proper IPA signing (no AppleDouble resource fork contamination)
+- [x] Device family targeting (`devices = ["iphone"]` → UIDeviceFamily)
 
 ## Key Files
 
