@@ -38,23 +38,26 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Status: v3.8.0 Released
+## Status: v3.9.0 Released
 
 - [x] Fork Swift Bundler
 - [x] Fix iOS app icons
 - [x] Implement signing discovery
-- [x] Create MCP server (31 tools, 61 capabilities)
+- [x] Create MCP server (57 tools, 61 capabilities)
 - [x] Mint distribution (`mint install bmdragos/xclaude`)
 - [x] Async-only builds (`build_start` + `build_status` + `build_logs`)
 - [x] Clean entitlements architecture (regenerated fresh per build)
 - [x] Multi-team signing support (team ID from certificate OU field)
+- [x] App Store Connect API integration (21 tools for devices, profiles, TestFlight)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `Sources/XClaudeCore/MCP/MCPTools.swift` | All 31 MCP tool implementations (3800+ lines) |
+| `Sources/XClaudeCore/MCP/MCPTools.swift` | All 57 MCP tool implementations (5000+ lines) |
 | `Sources/XClaudeCore/MCP/MCPServer.swift` | JSON-RPC 2.0 server |
+| `Sources/XClaudeCore/ASC/AppStoreConnectClient.swift` | App Store Connect API client (JWT auth, REST calls) |
+| `Sources/XClaudeCore/ASC/ASCCredentialStore.swift` | Persistent ASC credential storage (~/.xclaude/) |
 | `Sources/XClaudeCore/Build/BuildRunner.swift` | Synchronous builds via swift-bundler |
 | `Sources/XClaudeCore/Build/BuildManager.swift` | Async builds with buffered output |
 | `Sources/XClaudeCore/Deploy/DeployRunner.swift` | Simulator/device deployment |
@@ -69,7 +72,10 @@ MyApp/
 Sources/XClaudeCore/
 ├── MCP/
 │   ├── MCPServer.swift     # JSON-RPC 2.0 server, tool dispatch
-│   └── MCPTools.swift      # All 31 tools (LARGE - consider splitting)
+│   └── MCPTools.swift      # All 57 tools (LARGE - consider splitting)
+├── ASC/
+│   ├── AppStoreConnectClient.swift  # JWT auth, API calls
+│   └── ASCCredentialStore.swift     # Credential persistence
 ├── Build/
 │   ├── BuildRunner.swift   # Sync builds, asset catalog compilation
 │   └── BuildManager.swift  # Async builds with job tracking
@@ -191,6 +197,50 @@ Stores expensive discovery results in `~/.xclaude/`:
 - **Devices**: 30 sec TTL
 
 Force refresh: `forceRefresh: true`
+
+## App Store Connect API Integration
+
+21 tools for automating Apple Developer Portal tasks:
+
+### Authentication
+- `asc_configure(issuer_id, key_path, key_id?)` - Configure API credentials (stored in `~/.xclaude/asc_credentials.json`)
+- `asc_status()` - Check credential status and test connection
+
+### Device Registration
+- `asc_list_devices()` - List registered devices
+- `asc_register_device(udid, name)` - Register new device (uses hardware UDID, not CoreDevice UUID)
+
+### Provisioning Profiles
+- `asc_list_profiles()` - List all profiles
+- `asc_create_profile(name, bundle_id, profile_type?)` - Create new profile
+- `asc_delete_profile(profile_id)` - Delete profile
+- `asc_download_profile(profile_id)` - Download and install profile
+- `asc_regenerate_profile(bundle_id)` - Delete + recreate with all devices
+
+### TestFlight
+- `asc_list_apps()` - List apps (get app IDs)
+- `asc_list_bundle_ids()` - List registered bundle identifiers
+- `asc_create_bundle_id(identifier, name)` - Register new bundle ID
+- `asc_create_app(bundle_id, name, sku)` - **Limited**: Apple's API doesn't support this, returns manual steps
+- `asc_list_builds(app_id)` - List uploaded builds
+- `asc_list_groups()` - List beta groups
+- `asc_create_group(app_id, name, is_internal?, public_link_enabled?)` - Create beta group
+- `asc_add_build_to_group(group_id, build_id)` - Add build for distribution
+- `asc_list_testers()` - List beta testers
+- `asc_add_tester(email, first_name?, last_name?, group_ids?)` - Add tester
+- `asc_remove_tester(email)` - Remove tester
+- `asc_set_whats_new(build_id, whats_new, locale?)` - Set "What's New" text
+
+### API Credentials
+Get from App Store Connect → Users and Access → Keys:
+1. Generate API Key (Admin role recommended)
+2. Download the `.p8` private key (only available once!)
+3. Note the Key ID and Issuer ID
+4. Run `asc_configure(issuer_id: "...", key_path: "/path/to/AuthKey_XXX.p8")`
+
+### Known Limitations
+- **Cannot create apps via API**: Apple's API returns FORBIDDEN_ERROR. `asc_create_app` detects this and returns manual steps with pre-filled values.
+- **Hardware UDID vs CoreDevice UUID**: `devicectl` shows CoreDevice UUID, but `asc_register_device` needs the hardware UDID. Use `xcrun devicectl device info details --device <uuid>` to get the hardware UDID.
 
 ## Testing Changes
 

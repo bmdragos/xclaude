@@ -116,7 +116,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 ## Features
 
-### 36 MCP Tools
+### 57 MCP Tools
 
 | Category | Tools |
 |----------|-------|
@@ -131,6 +131,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 | **Capabilities** | `add_capability`, `remove_capability`, `list_capabilities` |
 | **Distribution** | `archive`, `validate`, `upload` |
 | **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
+| **App Store Connect** | `asc_configure`, `asc_status`, `asc_list_devices`, `asc_register_device`, `asc_list_profiles`, `asc_create_profile`, `asc_delete_profile`, `asc_download_profile`, `asc_regenerate_profile`, `asc_list_apps`, `asc_list_bundle_ids`, `asc_create_bundle_id`, `asc_create_app`, `asc_list_builds`, `asc_list_groups`, `asc_create_group`, `asc_add_build_to_group`, `asc_list_testers`, `asc_add_tester`, `asc_remove_tester`, `asc_set_whats_new` |
 | **Info** | `get_version` |
 
 ### Async Builds
@@ -208,6 +209,41 @@ Entitlements.plist is regenerated fresh each build from `[capabilities]`, avoidi
 **Other:** personal-vpn, data-protection, family-controls, autofill-credentials, maps-routing.
 
 Run `list_capabilities` to see all 61 with platform info.
+
+### App Store Connect Integration
+
+Automate device registration, provisioning profiles, and TestFlight distribution:
+
+**Setup (one-time):**
+1. Go to App Store Connect → Users and Access → Keys
+2. Generate an API Key (Admin role recommended)
+3. Download the `.p8` private key (only available once!)
+4. Configure: `asc_configure(issuer_id: "...", key_path: "/path/to/AuthKey_XXX.p8")`
+
+**Register a new device:**
+```
+asc_register_device(udid: "00008130-...", name: "Test iPhone")
+asc_regenerate_profile(bundle_id: "com.example.myapp")
+# Profile now includes the new device
+```
+
+**Deploy to TestFlight:**
+```
+# 1. Archive and upload
+archive()  → .ipa file
+upload(path: "MyApp.ipa")  # Auto-uses ASC credentials
+
+# 2. Wait for processing (~5-10 min)
+asc_list_builds(app_id: "...")  # Check for new build
+
+# 3. Distribute to testers
+asc_add_build_to_group(group_id: "...", build_id: "...")
+asc_set_whats_new(build_id: "...", whats_new: "Bug fixes and improvements")
+```
+
+**Known limitations:**
+- Cannot create apps via API (Apple limitation) - `asc_create_app` returns manual steps
+- The `upload` tool auto-uses credentials from `asc_configure`
 
 ## Auto-Discovery
 

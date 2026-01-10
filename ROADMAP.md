@@ -4,58 +4,6 @@ Feature ideas and implementation notes for future development.
 
 ## High Priority
 
-### App Store Connect API Integration
-
-**Problem**: Managing TestFlight, devices, and provisioning profiles requires manual portal work.
-
-**Solution**: Integrate App Store Connect API to automate the annoying console tasks.
-
-**Capabilities**:
-
-1. **Device Registration**
-   - `register_device(udid, name)` - register new device directly
-   - Auto-fix "device not in profile" by registering + regenerating profile
-   - List registered devices
-
-2. **Provisioning Profiles**
-   - `regenerate_profile(bundle_id)` - create/update profile with all devices
-   - Auto-include newly registered devices
-   - Download and install profiles automatically
-
-3. **TestFlight**
-   - `upload_to_testflight()` - upload build (wraps existing upload with better UX)
-   - `add_tester(email, group?)` - add beta testers
-   - `list_testers()` - see who has access
-   - `set_whats_new(text)` - update release notes
-   - `submit_for_review()` - submit build for beta review
-
-**Authentication**:
-- JWT-based auth using .p8 private key from App Store Connect
-- User provides: API Key ID, Issuer ID, path to .p8 file
-- Store in xclaude.toml `[app_store_connect]` section or `~/.xclaude/asc_credentials.json`
-
-**Implementation**:
-- Use URLSession with JWT signing
-- API base: `https://api.appstoreconnect.apple.com/v1/`
-- JWT library: Can use CryptoKit for ES256 signing
-
-**Workflow improvement**:
-```
-# Before: manual hell
-1. Get device UDID from devicectl
-2. Log into Apple Developer Portal
-3. Add device
-4. Regenerate provisioning profile
-5. Download profile
-6. Build again
-
-# After: one command
-xclaude: register_device(udid: "00008130-...", name: "Test iPhone")
-→ Device registered, profile regenerated, ready to build
-```
-
----
-
 ### Device App Logs
 
 **Problem**: Can't see app logs from physical devices. `get_logs` only works for simulator.
@@ -181,6 +129,18 @@ stop_device_logs(session_id)   → { lines: [...] }
 ---
 
 ## Completed
+
+### v3.9.0
+- [x] App Store Connect API integration (21 tools)
+  - Device registration: `asc_list_devices`, `asc_register_device`
+  - Provisioning profiles: `asc_list_profiles`, `asc_create_profile`, `asc_delete_profile`, `asc_download_profile`, `asc_regenerate_profile`
+  - Bundle IDs: `asc_list_bundle_ids`, `asc_create_bundle_id`
+  - Apps: `asc_list_apps`, `asc_create_app` (returns manual steps - Apple API limitation)
+  - TestFlight: `asc_list_builds`, `asc_list_groups`, `asc_create_group`, `asc_add_build_to_group`, `asc_list_testers`, `asc_add_tester`, `asc_remove_tester`, `asc_set_whats_new`
+  - Auth: `asc_configure`, `asc_status`
+- [x] JWT authentication with ES256 signing via CryptoKit
+- [x] Credentials stored in `~/.xclaude/asc_credentials.json`
+- [x] `upload` tool auto-uses ASC credentials
 
 ### v3.8.0
 - [x] Device-first defaults (build_start defaults to iOS, deploy defaults to device)
