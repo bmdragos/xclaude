@@ -86,30 +86,6 @@ public enum MCPTools {
       ]
     ),
     Tool(
-      name: "build",
-      description: "Build an app for a target platform",
-      inputSchema: [
-        "type": "object",
-        "properties": [
-          "platform": [
-            "type": "string",
-            "description": "Target platform (iOS, iOSSimulator, macOS, etc.)",
-            "default": "iOSSimulator"
-          ],
-          "configuration": [
-            "type": "string",
-            "description": "Build configuration (debug or release)",
-            "default": "debug"
-          ],
-          "path": [
-            "type": "string",
-            "description": "Path to the project directory"
-          ]
-        ] as [String: Any],
-        "required": [] as [String]
-      ]
-    ),
-    Tool(
       name: "build_start",
       description: "Start a build in background. Returns immediately with job ID. Use build_logs to check progress.",
       inputSchema: [
@@ -738,8 +714,6 @@ public enum MCPTools {
         return try await listSimulators(arguments: arguments)
       case "list_devices":
         return try await listDevices()
-      case "build":
-        return try await build(arguments: arguments)
       case "build_start":
         return try await buildStart(arguments: arguments)
       case "build_status":
@@ -980,39 +954,6 @@ public enum MCPTools {
       // Device might not be available for detailed query
     }
     return nil
-  }
-
-  static func build(arguments: [String: Any]) async throws -> String {
-    let platformStr = arguments["platform"] as? String ?? "iOSSimulator"
-    let configStr = arguments["configuration"] as? String ?? "debug"
-    let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
-
-    guard let platform = BuildRunner.Platform(rawValue: platformStr) else {
-      return encodeJSON(BuildRunner.BuildResult(
-        success: false,
-        appPath: nil,
-        platform: platformStr,
-        configuration: configStr,
-        duration: 0,
-        warnings: [],
-        errors: [BuildRunner.BuildError(
-          code: "INVALID_PLATFORM",
-          message: "Invalid platform: \(platformStr). Valid options: \(BuildRunner.Platform.allCases.map { $0.rawValue }.joined(separator: ", "))",
-          fixable: false
-        )]
-      ))
-    }
-
-    let configuration: BuildRunner.Configuration = configStr == "release" ? .release : .debug
-    let projectURL = URL(fileURLWithPath: pathStr)
-
-    let result = try await BuildRunner.build(
-      projectDirectory: projectURL,
-      platform: platform,
-      configuration: configuration
-    )
-
-    return encodeJSON(result)
   }
 
   // MARK: - Async Build Response Types
