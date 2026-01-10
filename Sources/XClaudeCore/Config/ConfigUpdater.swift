@@ -519,7 +519,7 @@ public struct CapabilityManager {
       case .calendars:
         return "NSCalendarsUsageDescription"
       case .healthKit:
-        return "NSHealthShareUsageDescription"
+        return "NSHealthShareUsageDescription"  // Primary key (read)
       case .homeKit:
         return "NSHomeKitUsageDescription"
       case .siri:
@@ -551,7 +551,7 @@ public struct CapabilityManager {
       case .calendars:
         return "This app needs access to your calendars."
       case .healthKit:
-        return "This app needs access to your health data."
+        return "This app needs to read your health data."
       case .homeKit:
         return "This app needs access to your HomeKit devices."
       case .siri:
@@ -560,6 +560,16 @@ public struct CapabilityManager {
         return "This app needs to read NFC tags."
       case .bluetooth:
         return "This app needs to communicate with Bluetooth devices."
+      default:
+        return nil
+      }
+    }
+
+    /// Additional usage description keys for capabilities that need multiple (e.g., HealthKit)
+    var additionalUsageDescriptions: [String: String]? {
+      switch self {
+      case .healthKit:
+        return ["NSHealthUpdateUsageDescription": "This app needs to save workout data to Health."]
       default:
         return nil
       }
@@ -655,9 +665,22 @@ public struct CapabilityManager {
     }
 
     // Add usage description if this capability requires one
+    var needsSave = false
     if let usageKey = capability.usageDescriptionKey,
        let usageDesc = value ?? capability.defaultUsageDescription {
       infoPlistAdditions[usageKey] = usageDesc
+      needsSave = true
+    }
+
+    // Add additional usage descriptions (e.g., HealthKit needs both read and write descriptions)
+    if let additionalDescs = capability.additionalUsageDescriptions {
+      for (key, defaultDesc) in additionalDescs {
+        infoPlistAdditions[key] = defaultDesc
+      }
+      needsSave = true
+    }
+
+    if needsSave {
       let infoPlistData = try PropertyListSerialization.data(fromPropertyList: infoPlistAdditions, format: .xml, options: 0)
       try infoPlistData.write(to: infoPlistPath)
     }
@@ -676,6 +699,15 @@ public struct CapabilityManager {
     if let usageKey = capability.usageDescriptionKey,
        let usageDesc = capability.defaultUsageDescription {
       infoPlistDict = [usageKey: value ?? usageDesc]
+    }
+    // Include additional usage descriptions in the result
+    if let additionalDescs = capability.additionalUsageDescriptions {
+      if infoPlistDict == nil {
+        infoPlistDict = [:]
+      }
+      for (key, desc) in additionalDescs {
+        infoPlistDict?[key] = desc
+      }
     }
 
     // Generate platform warning for macOS-only capabilities
