@@ -478,7 +478,9 @@ extension SigningDiscovery {
         "com.apple.security.cs.allow-jit",
         "com.apple.security.cs.allow-unsigned-executable-memory",
         "com.apple.security.cs.allow-dyld-environment-variables",
-        "com.apple.security.cs.disable-library-validation"
+        "com.apple.security.cs.disable-library-validation",
+        // get-task-allow variants (iOS uses "get-task-allow", macOS uses "com.apple.security.get-task-allow")
+        "com.apple.security.get-task-allow"
       ]
       for key in macOSOnlyEntitlements {
         if entitlements.removeValue(forKey: key) != nil {
