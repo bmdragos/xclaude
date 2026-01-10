@@ -116,7 +116,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 ## Features
 
-### 57 MCP Tools
+### 60 MCP Tools
 
 | Category | Tools |
 |----------|-------|
@@ -131,7 +131,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 | **Capabilities** | `add_capability`, `remove_capability`, `list_capabilities` |
 | **Distribution** | `archive`, `validate`, `upload` |
 | **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
-| **App Store Connect** | `asc_configure`, `asc_status`, `asc_list_devices`, `asc_register_device`, `asc_list_profiles`, `asc_create_profile`, `asc_delete_profile`, `asc_download_profile`, `asc_regenerate_profile`, `asc_list_apps`, `asc_list_bundle_ids`, `asc_create_bundle_id`, `asc_create_app`, `asc_list_builds`, `asc_list_groups`, `asc_create_group`, `asc_add_build_to_group`, `asc_list_testers`, `asc_add_tester`, `asc_remove_tester`, `asc_set_whats_new` |
+| **App Store Connect** | `asc_configure`, `asc_status`, `asc_list_devices`, `asc_register_device`, `asc_list_profiles`, `asc_create_profile`, `asc_delete_profile`, `asc_download_profile`, `asc_regenerate_profile`, `asc_list_certificates`, `asc_create_certificate`, `asc_revoke_certificate`, `asc_list_apps`, `asc_list_bundle_ids`, `asc_create_bundle_id`, `asc_create_app`, `asc_list_builds`, `asc_list_groups`, `asc_create_group`, `asc_add_build_to_group`, `asc_list_testers`, `asc_add_tester`, `asc_remove_tester`, `asc_set_whats_new` |
 | **Info** | `get_version` |
 
 ### Async Builds

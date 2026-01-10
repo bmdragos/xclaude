@@ -43,18 +43,18 @@ MyApp/
 - [x] Fork Swift Bundler
 - [x] Fix iOS app icons
 - [x] Implement signing discovery
-- [x] Create MCP server (57 tools, 61 capabilities)
+- [x] Create MCP server (60 tools, 61 capabilities)
 - [x] Mint distribution (`mint install bmdragos/xclaude`)
 - [x] Async-only builds (`build_start` + `build_status` + `build_logs`)
 - [x] Clean entitlements architecture (regenerated fresh per build)
 - [x] Multi-team signing support (team ID from certificate OU field)
-- [x] App Store Connect API integration (21 tools for devices, profiles, TestFlight)
+- [x] App Store Connect API integration (24 tools for devices, profiles, certificates, TestFlight)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `Sources/XClaudeCore/MCP/MCPTools.swift` | All 57 MCP tool implementations (5000+ lines) |
+| `Sources/XClaudeCore/MCP/MCPTools.swift` | All 60 MCP tool implementations (5500+ lines) |
 | `Sources/XClaudeCore/MCP/MCPServer.swift` | JSON-RPC 2.0 server |
 | `Sources/XClaudeCore/ASC/AppStoreConnectClient.swift` | App Store Connect API client (JWT auth, REST calls) |
 | `Sources/XClaudeCore/ASC/ASCCredentialStore.swift` | Persistent ASC credential storage (~/.xclaude/) |
@@ -72,7 +72,7 @@ MyApp/
 Sources/XClaudeCore/
 ├── MCP/
 │   ├── MCPServer.swift     # JSON-RPC 2.0 server, tool dispatch
-│   └── MCPTools.swift      # All 57 tools (LARGE - consider splitting)
+│   └── MCPTools.swift      # All 60 tools (LARGE - consider splitting)
 ├── ASC/
 │   ├── AppStoreConnectClient.swift  # JWT auth, API calls
 │   └── ASCCredentialStore.swift     # Credential persistence

@@ -142,13 +142,24 @@ extension XClaudeConfig {
     // Parse [signing] section (optional) with platform-specific overrides
     var signing: SigningConfig? = nil
     if let signingTable = table["signing"]?.table {
-      // Helper to parse platform-specific signing
+      // Helper to parse mode-specific signing (development/distribution)
+      func parseModeConfig(_ modeTable: TOMLTable?) -> SigningModeConfig? {
+        guard let modeTable = modeTable else { return nil }
+        let identity = modeTable["identity"]?.string
+        let profile = modeTable["profile"]?.string
+        guard identity != nil || profile != nil else { return nil }
+        return SigningModeConfig(identity: identity, profile: profile)
+      }
+
+      // Helper to parse platform-specific signing with mode overrides
       func parsePlatformSigning(_ key: String) -> PlatformSigningConfig? {
         guard let platformTable = signingTable[key]?.table else { return nil }
         return PlatformSigningConfig(
           team: platformTable["team"]?.string,
           identity: platformTable["identity"]?.string,
-          profile: platformTable["profile"]?.string
+          profile: platformTable["profile"]?.string,
+          development: parseModeConfig(platformTable["development"]?.table),
+          distribution: parseModeConfig(platformTable["distribution"]?.table)
         )
       }
 
@@ -300,20 +311,44 @@ extension XClaudeConfig {
           lines.append("profile = \"\(profile)\"")
         }
 
-        // Helper to output platform-specific signing
-        func outputPlatformSigning(_ name: String, _ config: PlatformSigningConfig?) {
+        // Helper to output mode-specific signing
+        func outputModeConfig(_ platformName: String, _ modeName: String, _ config: SigningModeConfig?) {
           guard let config = config,
-                (config.team != nil || config.identity != nil || config.profile != nil) else { return }
+                (config.identity != nil || config.profile != nil) else { return }
           lines.append("")
-          lines.append("[signing.\(name)]")
-          if let team = config.team {
-            lines.append("team = \"\(team)\"")
-          }
+          lines.append("[signing.\(platformName).\(modeName)]")
           if let identity = config.identity {
             lines.append("identity = \"\(identity)\"")
           }
           if let profile = config.profile {
             lines.append("profile = \"\(profile)\"")
+          }
+        }
+
+        // Helper to output platform-specific signing
+        func outputPlatformSigning(_ name: String, _ config: PlatformSigningConfig?) {
+          guard let config = config else { return }
+          let hasBaseConfig = config.team != nil || config.identity != nil || config.profile != nil
+          let hasModeConfig = config.development != nil || config.distribution != nil
+
+          if hasBaseConfig {
+            lines.append("")
+            lines.append("[signing.\(name)]")
+            if let team = config.team {
+              lines.append("team = \"\(team)\"")
+            }
+            if let identity = config.identity {
+              lines.append("identity = \"\(identity)\"")
+            }
+            if let profile = config.profile {
+              lines.append("profile = \"\(profile)\"")
+            }
+          }
+
+          // Output mode-specific configs
+          if hasModeConfig {
+            outputModeConfig(name, "development", config.development)
+            outputModeConfig(name, "distribution", config.distribution)
           }
         }
 
@@ -534,6 +569,11 @@ public struct SigningConfig: Codable {
 
   /// Get signing config for a specific platform (platform-specific takes precedence)
   public func forPlatform(_ platform: String) -> (team: String?, identity: String?, profile: String?) {
+    return forPlatform(platform, mode: nil)
+  }
+
+  /// Get signing config for a specific platform and mode (development/distribution)
+  public func forPlatform(_ platform: String, mode: SigningMode?) -> (team: String?, identity: String?, profile: String?) {
     let platformLower = platform.lowercased()
 
     // Check for platform-specific config
@@ -550,12 +590,20 @@ public struct SigningConfig: Codable {
       platformConfig = nil
     }
 
-    // Platform-specific values take precedence over generic
-    return (
-      team: platformConfig?.team ?? team,
-      identity: platformConfig?.identity ?? identity,
-      profile: platformConfig?.profile ?? profile
-    )
+    // Get team (mode doesn't affect team)
+    let resolvedTeam = platformConfig?.team ?? team
+
+    // Get identity and profile, considering mode if specified
+    var resolvedIdentity = platformConfig?.identity ?? identity
+    var resolvedProfile = platformConfig?.profile ?? profile
+
+    if let mode = mode, let platformConfig = platformConfig {
+      let modeConfig = platformConfig.forMode(mode)
+      resolvedIdentity = modeConfig.identity ?? resolvedIdentity
+      resolvedProfile = modeConfig.profile ?? resolvedProfile
+    }
+
+    return (team: resolvedTeam, identity: resolvedIdentity, profile: resolvedProfile)
   }
 }
 
@@ -565,8 +613,47 @@ public struct PlatformSigningConfig: Codable {
   public var identity: String?
   public var profile: String?
 
-  public init(team: String? = nil, identity: String? = nil, profile: String? = nil) {
+  // Mode-specific overrides (development vs distribution)
+  public var development: SigningModeConfig?
+  public var distribution: SigningModeConfig?
+
+  public init(
+    team: String? = nil,
+    identity: String? = nil,
+    profile: String? = nil,
+    development: SigningModeConfig? = nil,
+    distribution: SigningModeConfig? = nil
+  ) {
     self.team = team
+    self.identity = identity
+    self.profile = profile
+    self.development = development
+    self.distribution = distribution
+  }
+
+  /// Get signing config for a specific mode
+  public func forMode(_ mode: SigningMode) -> (identity: String?, profile: String?) {
+    switch mode {
+    case .development:
+      return (development?.identity ?? identity, development?.profile ?? profile)
+    case .distribution:
+      return (distribution?.identity ?? identity, distribution?.profile ?? profile)
+    }
+  }
+}
+
+/// Signing mode (development vs distribution)
+public enum SigningMode: String {
+  case development
+  case distribution
+}
+
+/// Mode-specific signing (identity and profile only, team inherited)
+public struct SigningModeConfig: Codable {
+  public var identity: String?
+  public var profile: String?
+
+  public init(identity: String? = nil, profile: String? = nil) {
     self.identity = identity
     self.profile = profile
   }

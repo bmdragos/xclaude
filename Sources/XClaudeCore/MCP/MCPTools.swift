@@ -579,6 +579,10 @@ public enum MCPTools {
             "type": "string",
             "description": "Path to .ipa file to upload"
           ],
+          "profile": [
+            "type": "string",
+            "description": "ASC credential profile to use (default: 'default'). See asc_configure."
+          ],
           "api_key": [
             "type": "string",
             "description": "Path to App Store Connect API key (.p8 file). Optional if asc_configure was used."
@@ -3257,9 +3261,20 @@ public enum MCPTools {
     let discovery = SigningDiscovery()
     let signingData = try await discovery.discoverAll()
 
+    // Check xclaude.toml for explicit distribution signing config
+    let signingMode: SigningMode = exportMethod == "development" ? .development : .distribution
+    let configuredSigning = config.signing?.forPlatform("iOS", mode: signingMode)
+    let configuredProfileName = configuredSigning?.profile
+    let configuredIdentityName = configuredSigning?.identity
+
     // Find matching profile for distribution
     let matchingProfiles = signingData.profiles.filter { profile in
-      // Match bundle ID
+      // If config specifies a profile name, match it exactly
+      if let configuredName = configuredProfileName {
+        return profile.name == configuredName && !profile.isExpired
+      }
+
+      // Otherwise, match by bundle ID
       let matchesBundleId = profile.bundleIdPattern == bundleId ||
         (profile.isWildcard && (profile.bundleIdPattern == "*" ||
           bundleId.hasPrefix(profile.bundleIdPattern.replacingOccurrences(of: "*", with: ""))))
@@ -3272,8 +3287,14 @@ public enum MCPTools {
       return matchesBundleId && !profile.isExpired && isDistribution
     }
 
-    // Sort profiles: exact matches first, then by profile type preference
+    // Sort profiles: configured name first, then exact matches, then by profile type preference
     let sortedProfiles = matchingProfiles.sorted { a, b in
+      // 0. Configured profile name takes top priority
+      if let configuredName = configuredProfileName {
+        if a.name == configuredName { return true }
+        if b.name == configuredName { return false }
+      }
+
       // 1. Exact bundle ID match beats wildcard
       let aExact = a.bundleIdPattern == bundleId
       let bExact = b.bundleIdPattern == bundleId
@@ -3333,7 +3354,22 @@ public enum MCPTools {
       $0.teamId == profile.teamId && $0.name.contains("Developer ID")
     } && distributionIdentities.isEmpty
 
-    let identity = distributionIdentities.first ?? signingData.identities.first { $0.teamId == profile.teamId }
+    // Prefer configured identity from xclaude.toml [signing.iOS.distribution] if specified
+    let identity: SigningIdentity?
+    if let configuredName = configuredIdentityName {
+      // Look for exact match first
+      if let exact = signingData.identities.first(where: { $0.name == configuredName }) {
+        identity = exact
+      } else if let partial = signingData.identities.first(where: { $0.name.contains(configuredName) }) {
+        // Fall back to partial match
+        identity = partial
+      } else {
+        // Configured identity not found - fall back to auto-discovery
+        identity = distributionIdentities.first ?? signingData.identities.first { $0.teamId == profile.teamId }
+      }
+    } else {
+      identity = distributionIdentities.first ?? signingData.identities.first { $0.teamId == profile.teamId }
+    }
 
     guard let identity = identity else {
       var message = "No signing identity found for team '\(profile.teamId)'"
@@ -3387,11 +3423,93 @@ public enum MCPTools {
       ))
     }
 
-    // Re-sign with distribution identity
-    let entitlementsPath = projectURL.appendingPathComponent(".xclaude/derived/Entitlements.plist").path
+    // Add required Info.plist keys for App Store submission
+    let infoPlistPath = appURL.appendingPathComponent("Info.plist").path
+    if FileManager.default.fileExists(atPath: infoPlistPath) {
+      // Get Xcode/SDK info
+      let xcodeVersion = (try? runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output)?
+        .components(separatedBy: "\n").first?
+        .replacingOccurrences(of: "Xcode ", with: "") ?? "16.0"
+      let xcodeBuild = (try? runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output)?
+        .components(separatedBy: "\n").dropFirst().first?
+        .replacingOccurrences(of: "Build version ", with: "") ?? "16A242d"
+      let sdkVersion = (try? runCommandSync("/usr/bin/xcrun", arguments: ["--show-sdk-version", "--sdk", "iphoneos"]).output)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "18.0"
+
+      // Add DTPlatformName
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :DTPlatformName string iphoneos", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :DTPlatformName iphoneos", infoPlistPath])
+
+      // Add DTSDKName
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :DTSDKName string iphoneos\(sdkVersion)", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :DTSDKName iphoneos\(sdkVersion)", infoPlistPath])
+
+      // Add DTPlatformVersion
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :DTPlatformVersion string \(sdkVersion)", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :DTPlatformVersion \(sdkVersion)", infoPlistPath])
+
+      // Add DTXcode
+      let dtXcode = xcodeVersion.replacingOccurrences(of: ".", with: "").padding(toLength: 4, withPad: "0", startingAt: 0)
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :DTXcode string \(dtXcode)", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :DTXcode \(dtXcode)", infoPlistPath])
+
+      // Add DTXcodeBuild
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :DTXcodeBuild string \(xcodeBuild)", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :DTXcodeBuild \(xcodeBuild)", infoPlistPath])
+
+      // Add UIRequiredDeviceCapabilities with arm64
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :UIRequiredDeviceCapabilities array", infoPlistPath])
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Add :UIRequiredDeviceCapabilities:0 string arm64", infoPlistPath])
+    }
+
+    // Generate distribution entitlements (get-task-allow = false for distribution)
+    let distEntitlementsPath = projectURL.appendingPathComponent(".xclaude/derived/Entitlements-dist.plist").path
+    let devEntitlementsPath = projectURL.appendingPathComponent(".xclaude/derived/Entitlements.plist").path
+
+    if FileManager.default.fileExists(atPath: devEntitlementsPath) {
+      // Copy dev entitlements and modify for distribution
+      try? FileManager.default.removeItem(atPath: distEntitlementsPath)
+      try? FileManager.default.copyItem(atPath: devEntitlementsPath, toPath: distEntitlementsPath)
+
+      // Set get-task-allow to false for distribution
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :get-task-allow false", distEntitlementsPath])
+      // Also check for the macOS variant key
+      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        arguments: ["-c", "Set :com.apple.security.get-task-allow false", distEntitlementsPath])
+    } else {
+      // Create minimal distribution entitlements
+      let minimalEntitlements = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>application-identifier</key>
+          <string>\(profile.teamId).\(bundleId)</string>
+          <key>get-task-allow</key>
+          <false/>
+        </dict>
+        </plist>
+        """
+      try? minimalEntitlements.write(toFile: distEntitlementsPath, atomically: true, encoding: .utf8)
+    }
+
+    // Re-sign with distribution identity using distribution entitlements
     var codesignArgs = ["--force", "--sign", identity.name, "--timestamp"]
-    if FileManager.default.fileExists(atPath: entitlementsPath) {
-      codesignArgs += ["--entitlements", entitlementsPath]
+    if FileManager.default.fileExists(atPath: distEntitlementsPath) {
+      codesignArgs += ["--entitlements", distEntitlementsPath]
     }
     codesignArgs.append(appPath)
 
@@ -3528,6 +3646,27 @@ public enum MCPTools {
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     return String(data: data, encoding: .utf8) ?? ""
+  }
+
+  /// Synchronous command runner for simple commands (no async context needed)
+  private static func runCommandSync(_ command: String, arguments: [String]) -> (exit: Int32, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: command)
+    process.arguments = arguments
+
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+
+    do {
+      try process.run()
+      process.waitUntilExit()
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      let output = String(data: data, encoding: .utf8) ?? ""
+      return (process.terminationStatus, output)
+    } catch {
+      return (-1, "")
+    }
   }
 
   // MARK: - Validate
@@ -3799,7 +3938,8 @@ public enum MCPTools {
 
     // Auto-load from stored ASC credentials if not explicitly provided
     if apiKey == nil || apiKeyId == nil || apiIssuer == nil {
-      if let stored = try? ASCCredentialStore.load() {
+      let profileName = arguments["profile"] as? String ?? ASCCredentialStore.defaultProfile
+      if let stored = try? ASCCredentialStore.load(profile: profileName) {
         apiKey = apiKey ?? stored.privateKeyPath
         apiKeyId = apiKeyId ?? stored.keyId
         apiIssuer = apiIssuer ?? stored.issuerId

@@ -4,6 +4,44 @@ Feature ideas and implementation notes for future development.
 
 ## High Priority
 
+### Dev ↔ Distribution Workflow
+
+**Problem**: Switching between device testing and TestFlight/App Store submission is painful. Multiple manual steps, profile confusion, wrong entitlements.
+
+**Issues to fix**:
+
+1. **Single signing config** - Only one `[signing.iOS]` section, manual editing to switch
+   - Add `[signing.iOS.development]` and `[signing.iOS.distribution]` sections
+   - `build_start` uses development, `archive` uses distribution automatically
+
+2. **Profile name collision** - ASC names ("Lode Bike Development") become just "Lode Bike" locally
+   - Match profiles by UUID instead of display name
+   - Or parse profile type from contents (development vs distribution)
+
+3. **Wrong entitlements for archive** - `get-task-allow = true` even with distribution profile
+   - `archive` must force `get-task-allow = false`
+   - Detect profile type and set entitlements accordingly
+
+4. **Missing Info.plist keys for App Store**:
+   - `DTPlatformName` - required
+   - `UIRequiredDeviceCapabilities` - should include `arm64`
+   - `DTSDKName`, `DTXcode`, `DTXcodeBuild` - nice to have
+
+5. **Upload ignores asc_configure** - Had to manually pass api_key params
+   - Auto-use stored credentials from `~/.xclaude/asc_credentials.json`
+   - Add `profile` parameter to `upload` tool
+
+6. **Certificate naming** - API-created certs named "Created via API"
+   - Pass proper common_name when creating CSR
+
+**Implementation order**:
+1. ~~Fix upload to auto-use ASC credentials (quick win)~~ ✅
+2. ~~Add missing Info.plist keys for App Store~~ ✅
+3. ~~Fix archive entitlements (get-task-allow = false)~~ ✅
+4. ~~Add dual signing config support~~ ✅
+
+---
+
 ### Device App Logs
 
 **Problem**: Can't see app logs from physical devices. `get_logs` only works for simulator.
@@ -130,10 +168,20 @@ stop_device_logs(session_id)   → { lines: [...] }
 
 ## Completed
 
+### v3.10.0
+- [x] Dev ↔ Distribution workflow improvements:
+  - `upload` tool auto-uses ASC credentials from `asc_configure`
+  - Added `profile` parameter to `upload` for multi-account support
+  - Archive adds missing Info.plist keys (DTPlatformName, DTSDKName, DTPlatformVersion, DTXcode, DTXcodeBuild, UIRequiredDeviceCapabilities)
+  - Archive forces `get-task-allow = false` for distribution entitlements
+  - Dual signing config: `[signing.iOS.development]` and `[signing.iOS.distribution]` sections in xclaude.toml
+  - Build uses development signing, archive uses distribution signing automatically
+
 ### v3.9.0
-- [x] App Store Connect API integration (21 tools)
+- [x] App Store Connect API integration (24 tools)
   - Device registration: `asc_list_devices`, `asc_register_device`
   - Provisioning profiles: `asc_list_profiles`, `asc_create_profile`, `asc_delete_profile`, `asc_download_profile`, `asc_regenerate_profile`
+  - Certificates: `asc_list_certificates`, `asc_create_certificate`, `asc_revoke_certificate`
   - Bundle IDs: `asc_list_bundle_ids`, `asc_create_bundle_id`
   - Apps: `asc_list_apps`, `asc_create_app` (returns manual steps - Apple API limitation)
   - TestFlight: `asc_list_builds`, `asc_list_groups`, `asc_create_group`, `asc_add_build_to_group`, `asc_list_testers`, `asc_add_tester`, `asc_remove_tester`, `asc_set_whats_new`
