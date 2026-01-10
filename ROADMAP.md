@@ -14,9 +14,10 @@ Feature ideas and implementation notes for future development.
    - Add `[signing.iOS.development]` and `[signing.iOS.distribution]` sections
    - `build_start` uses development, `archive` uses distribution automatically
 
-2. **Profile name collision** - ASC names ("Lode Bike Development") become just "Lode Bike" locally
-   - Match profiles by UUID instead of display name
-   - Or parse profile type from contents (development vs distribution)
+2. ~~**Profile name collision** - ASC names ("Lode Bike Development") become just "Lode Bike" locally~~ ✅
+   - ~~Match profiles by UUID instead of display name~~
+   - ~~Or parse profile type from contents (development vs distribution)~~
+   - Fixed: Filter by team ID first, then by profile type (development/appStore/adHoc)
 
 3. **Wrong entitlements for archive** - `get-task-allow = true` even with distribution profile
    - `archive` must force `get-task-allow = false`
@@ -176,6 +177,13 @@ stop_device_logs(session_id)   → { lines: [...] }
   - Archive forces `get-task-allow = false` for distribution entitlements
   - Dual signing config: `[signing.iOS.development]` and `[signing.iOS.distribution]` sections in xclaude.toml
   - Build uses development signing, archive uses distribution signing automatically
+- [x] Profile name collision fix:
+  - Parse profile type from mobileprovision (development/appStore/adHoc/enterprise)
+  - Filter profiles by team ID from xclaude.toml first
+  - Match profile type to export method (app-store → appStore profile)
+- [x] Device family targeting:
+  - New `devices = ["iphone"]` config in [app] section
+  - Translates to UIDeviceFamily in Info.plist
 
 ### v3.9.0
 - [x] App Store Connect API integration (24 tools)
