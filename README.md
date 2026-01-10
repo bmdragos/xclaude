@@ -139,11 +139,11 @@ For long-running builds, use the async pattern:
 
 ```
 build_start(platform: "iOS")     → { job_id: "build-1" }
-build_status(job_id: "build-1")  → { status: "running", duration: 45.2 }
+build_status(job_id: "build-1")  → { status: "running", duration: 45.2, appPath: ".build/bundler/MyApp.app" }
 build_logs(job_id: "build-1")    → { lines: [...], status: "success" }
 ```
 
-This returns immediately and lets you poll for progress, similar to CI/CD job patterns.
+This returns immediately and lets you poll for progress. `appPath` tells you where to find the built `.app` for deployment.
 
 ### Example Workflows
 
@@ -170,21 +170,24 @@ This returns immediately and lets you poll for progress, similar to CI/CD job pa
 
 ### Capabilities (61 available)
 
-`add_capability` automatically handles both entitlements AND Info.plist:
+`add_capability` stores capabilities in `xclaude.toml` and handles Info.plist usage descriptions:
 
 ```
 add_capability("apple-events")
         ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Entitlements.plist:                                         │
-│   com.apple.security.automation.apple-events = true         │
+│ xclaude.toml:                                               │
+│   [capabilities]                                            │
+│   apple-events = true                                       │
 │                                                             │
-│ Info.plist:                                                 │
+│   [info_plist]                                              │
 │   NSAppleEventsUsageDescription = "This app needs to..."   │
 └─────────────────────────────────────────────────────────────┘
         ↓
-    build (macOS)  →  automatically signed with entitlements
+    build (macOS)  →  entitlements generated fresh, app signed
 ```
+
+Entitlements.plist is regenerated fresh each build from `[capabilities]`, avoiding cross-platform contamination.
 
 **iOS/Shared:** push-notifications, app-groups, icloud, keychain, healthkit, homekit, in-app-purchase, siri, wallet, background-modes, and more.
 
@@ -280,7 +283,7 @@ This usually means one of:
 
 3. **Entitlement mismatch**: App has entitlements the profile doesn't allow
    - macOS sandbox entitlements (`com.apple.security.*`) don't work on iOS
-   - xclaude v3.1+ automatically strips these for iOS builds
+   - xclaude v3.7.0+ regenerates entitlements fresh each build, auto-filtering by platform
 
 ### Certificate shows in Xcode but not in keychain
 
@@ -316,8 +319,9 @@ build(platform: "macOS")
 ```
 
 Platform-specific entitlements are handled automatically:
-- macOS sandbox entitlements are stripped from iOS builds
-- Info.plist usage descriptions are added for iOS capabilities (camera, bluetooth, etc.)
+- Entitlements regenerated fresh each build from `[capabilities]` in xclaude.toml
+- macOS-only capabilities filtered out for iOS builds (and vice versa)
+- Info.plist usage descriptions added for iOS capabilities (camera, bluetooth, etc.)
 
 ## License
 
