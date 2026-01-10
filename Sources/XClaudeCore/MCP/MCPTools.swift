@@ -3520,11 +3520,20 @@ public enum MCPTools {
     }
 
     // Determine authentication method
-    let apiKey = arguments["api_key"] as? String
-    let apiKeyId = arguments["api_key_id"] as? String
-    let apiIssuer = arguments["api_issuer"] as? String
+    var apiKey = arguments["api_key"] as? String
+    var apiKeyId = arguments["api_key_id"] as? String
+    var apiIssuer = arguments["api_issuer"] as? String
     let appleId = arguments["apple_id"] as? String
     let password = arguments["password"] as? String
+
+    // Auto-load from stored ASC credentials if not explicitly provided
+    if apiKey == nil || apiKeyId == nil || apiIssuer == nil {
+      if let stored = try? ASCCredentialStore.load() {
+        apiKey = apiKey ?? stored.privateKeyPath
+        apiKeyId = apiKeyId ?? stored.keyId
+        apiIssuer = apiIssuer ?? stored.issuerId
+      }
+    }
 
     var uploadArgs: [String]
 
@@ -3573,7 +3582,7 @@ public enum MCPTools {
     } else {
       return encodeJSON(UploadResult(
         success: false,
-        message: "Authentication required. Provide either: (api_key + api_key_id + api_issuer) or (apple_id + password)",
+        message: "Authentication required. Use asc_configure to set up credentials (auto-used), or provide: (api_key + api_key_id + api_issuer) or (apple_id + password)",
         uploadId: nil
       ))
     }
