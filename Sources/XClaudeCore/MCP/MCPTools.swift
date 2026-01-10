@@ -3266,6 +3266,7 @@ public enum MCPTools {
     let configuredSigning = config.signing?.forPlatform("iOS", mode: signingMode)
     let configuredProfileName = configuredSigning?.profile
     let configuredIdentityName = configuredSigning?.identity
+    let configuredTeamId = config.signing?.team
 
     // Map export method to expected profile type
     let expectedProfileType: ProfileType = {
@@ -3280,6 +3281,11 @@ public enum MCPTools {
 
     // Find matching profile for distribution
     let matchingProfiles = signingData.profiles.filter { profile in
+      // CRITICAL: If team ID is configured, filter by it first to avoid profile name collisions
+      if let teamId = configuredTeamId, profile.teamId != teamId {
+        return false
+      }
+
       // Must match bundle ID
       let matchesBundleId = profile.bundleIdPattern == bundleId ||
         (profile.isWildcard && (profile.bundleIdPattern == "*" ||

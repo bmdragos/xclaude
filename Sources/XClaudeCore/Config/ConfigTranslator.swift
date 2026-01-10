@@ -227,6 +227,25 @@ public struct ConfigTranslator {
       plistLines.append("\"UIBackgroundModes\" = [\(tomlArray(mapped))]")
     }
 
+    // --- Device Family ---
+    if let devices = config.app.devices, !devices.isEmpty {
+      var deviceFamily: [Int] = []
+      for device in devices {
+        switch device.lowercased() {
+        case "iphone":
+          if !deviceFamily.contains(1) { deviceFamily.append(1) }
+        case "ipad":
+          if !deviceFamily.contains(2) { deviceFamily.append(2) }
+        default:
+          break
+        }
+      }
+      if !deviceFamily.isEmpty {
+        let sorted = deviceFamily.sorted()
+        plistLines.append("\"UIDeviceFamily\" = [\(sorted.map { String($0) }.joined(separator: ", "))]")
+      }
+    }
+
     // --- Device Capabilities ---
     if let requiredCapabilities = config.app.requiredCapabilities, !requiredCapabilities.isEmpty {
       plistLines.append("\"UIRequiredDeviceCapabilities\" = [\(tomlArray(requiredCapabilities))]")

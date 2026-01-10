@@ -420,6 +420,9 @@ public struct AppConfig: Codable {
   // Background Modes
   public var backgroundModes: [String]?    // ["audio", "bluetooth-central", "location", etc.]
 
+  // Device Family
+  public var devices: [String]?               // ["iphone"], ["ipad"], or ["iphone", "ipad"] → UIDeviceFamily
+
   // Device Capabilities
   public var requiredCapabilities: [String]?  // ["bluetooth-le", "arm64", "arkit", etc.]
 
@@ -445,6 +448,7 @@ public struct AppConfig: Codable {
     statusBarHidden: Bool? = nil,
     statusBarStyle: String? = nil,
     backgroundModes: [String]? = nil,
+    devices: [String]? = nil,
     requiredCapabilities: [String]? = nil,
     urlSchemes: [String]? = nil,
     queriedSchemes: [String]? = nil,
@@ -464,6 +468,7 @@ public struct AppConfig: Codable {
     self.statusBarHidden = statusBarHidden
     self.statusBarStyle = statusBarStyle
     self.backgroundModes = backgroundModes
+    self.devices = devices
     self.requiredCapabilities = requiredCapabilities
     self.urlSchemes = urlSchemes
     self.queriedSchemes = queriedSchemes
