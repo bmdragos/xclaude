@@ -109,6 +109,7 @@ extension XClaudeConfig {
     let statusBarHidden = appTable["status_bar_hidden"]?.bool
     let statusBarStyle = appTable["status_bar_style"]?.string
     let backgroundModes = parseStringArray("background_modes")
+    let devices = parseStringArray("devices")
     let requiredCapabilities = parseStringArray("required_capabilities")
     let urlSchemes = parseStringArray("url_schemes")
     let queriedSchemes = parseStringArray("queried_schemes")
@@ -129,6 +130,7 @@ extension XClaudeConfig {
       statusBarHidden: statusBarHidden,
       statusBarStyle: statusBarStyle,
       backgroundModes: backgroundModes,
+      devices: devices,
       requiredCapabilities: requiredCapabilities,
       urlSchemes: urlSchemes,
       queriedSchemes: queriedSchemes,
@@ -262,6 +264,11 @@ extension XClaudeConfig {
     // Background Modes
     if let backgroundModes = app.backgroundModes, !backgroundModes.isEmpty {
       lines.append("background_modes = [\(formatArray(backgroundModes))]")
+    }
+
+    // Device Family
+    if let devices = app.devices, !devices.isEmpty {
+      lines.append("devices = [\(formatArray(devices))]")
     }
 
     // Device Capabilities
