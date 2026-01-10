@@ -5,14 +5,67 @@ import TOMLKit
 public struct XClaudeConfig: Codable {
   public var app: AppConfig
   public var signing: SigningConfig?
+  public var capabilities: [String: CapabilityValue]?  // Capability name -> value
   public var infoPlist: [String: String]?  // Custom Info.plist entries
 
-  public init(app: AppConfig, signing: SigningConfig? = nil, infoPlist: [String: String]? = nil) {
+  public init(
+    app: AppConfig,
+    signing: SigningConfig? = nil,
+    capabilities: [String: CapabilityValue]? = nil,
+    infoPlist: [String: String]? = nil
+  ) {
     self.app = app
     self.signing = signing
+    self.capabilities = capabilities
     self.infoPlist = infoPlist
   }
+}
 
+/// Capability value - can be bool, string, or string array
+public enum CapabilityValue: Codable, Equatable {
+  case bool(Bool)
+  case string(String)
+  case array([String])
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let boolValue = try? container.decode(Bool.self) {
+      self = .bool(boolValue)
+    } else if let stringValue = try? container.decode(String.self) {
+      self = .string(stringValue)
+    } else if let arrayValue = try? container.decode([String].self) {
+      self = .array(arrayValue)
+    } else {
+      throw DecodingError.typeMismatch(CapabilityValue.self, DecodingError.Context(
+        codingPath: decoder.codingPath,
+        debugDescription: "Expected bool, string, or array"
+      ))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .bool(let value):
+      try container.encode(value)
+    case .string(let value):
+      try container.encode(value)
+    case .array(let value):
+      try container.encode(value)
+    }
+  }
+
+  /// Convert to Any for plist serialization
+  public var anyValue: Any {
+    switch self {
+    case .bool(let v): return v
+    case .string(let v): return v
+    case .array(let v): return v
+    }
+  }
+}
+
+extension XClaudeConfig {
   /// Load config from xclaude.toml in a directory
   public static func load(from directory: URL) throws -> XClaudeConfig {
     let configPath = directory.appendingPathComponent("xclaude.toml")
@@ -110,6 +163,27 @@ public struct XClaudeConfig: Codable {
       )
     }
 
+    // Parse [capabilities] section (optional)
+    var capabilities: [String: CapabilityValue]? = nil
+    if let capabilitiesTable = table["capabilities"]?.table {
+      var caps: [String: CapabilityValue] = [:]
+      for (key, value) in capabilitiesTable {
+        if let boolValue = value.bool {
+          caps[key] = .bool(boolValue)
+        } else if let strValue = value.string {
+          caps[key] = .string(strValue)
+        } else if let arrValue = value.array {
+          let strings = arrValue.compactMap { $0.string }
+          if !strings.isEmpty {
+            caps[key] = .array(strings)
+          }
+        }
+      }
+      if !caps.isEmpty {
+        capabilities = caps
+      }
+    }
+
     // Parse [info_plist] section (optional)
     var infoPlist: [String: String]? = nil
     if let infoPlistTable = table["info_plist"]?.table {
@@ -124,7 +198,7 @@ public struct XClaudeConfig: Codable {
       }
     }
 
-    return XClaudeConfig(app: app, signing: signing, infoPlist: infoPlist)
+    return XClaudeConfig(app: app, signing: signing, capabilities: capabilities, infoPlist: infoPlist)
   }
 
   /// Save config to xclaude.toml
@@ -247,6 +321,24 @@ public struct XClaudeConfig: Codable {
         outputPlatformSigning("macOS", signing.macOS)
         outputPlatformSigning("visionOS", signing.visionOS)
         outputPlatformSigning("tvOS", signing.tvOS)
+      }
+    }
+
+    // Output [capabilities] section
+    if let capabilities = capabilities, !capabilities.isEmpty {
+      lines.append("")
+      lines.append("[capabilities]")
+      for (key, value) in capabilities.sorted(by: { $0.key < $1.key }) {
+        switch value {
+        case .bool(let b):
+          lines.append("\(key) = \(b)")
+        case .string(let s):
+          let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+          lines.append("\(key) = \"\(escaped)\"")
+        case .array(let arr):
+          lines.append("\(key) = [\(formatArray(arr))]")
+        }
       }
     }
 

@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "0.1.0-dev"
+  public static let version = "3.7.0"
 
   /// Tool definition
   struct Tool {
@@ -1146,6 +1146,16 @@ public enum MCPTools {
       arguments: args,
       swiftBundlerPath: bundlerPath
     )
+
+    // Set expected app path based on project config
+    if let config = try? XClaudeConfig.load(from: projectURL) {
+      let appName = config.app.name
+      let appPath = projectURL
+        .appendingPathComponent(".build/bundler")
+        .appendingPathComponent("\(appName).app")
+        .path
+      job.setAppPath(appPath)
+    }
 
     return encodeJSON(BuildStartResult(
       success: true,

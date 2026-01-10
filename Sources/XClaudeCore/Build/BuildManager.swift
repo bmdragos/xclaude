@@ -28,6 +28,7 @@ public final class BuildJob: @unchecked Sendable {
   private var _status: BuildStatus = .running
   private var _exitCode: Int32?
   private var _endTime: Date?
+  private var _appPath: String?
   private let maxBufferLines = 5000
 
   public var status: BuildStatus {
@@ -46,6 +47,18 @@ public final class BuildJob: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return _endTime
+  }
+
+  public var appPath: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _appPath
+  }
+
+  public func setAppPath(_ path: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    _appPath = path
   }
 
   public var duration: TimeInterval {
@@ -249,6 +262,7 @@ public struct BuildJobInfo: Codable {
   public let endTime: Date?
   public let duration: TimeInterval
   public let bufferedLines: Int
+  public let appPath: String?
 
   public init(from job: BuildJob) {
     self.id = job.id
@@ -261,5 +275,6 @@ public struct BuildJobInfo: Codable {
     self.endTime = job.endTime
     self.duration = job.duration
     self.bufferedLines = job.bufferedLineCount
+    self.appPath = job.appPath
   }
 }

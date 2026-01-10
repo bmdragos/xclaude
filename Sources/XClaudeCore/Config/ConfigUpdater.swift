@@ -613,6 +613,7 @@ public struct CapabilityManager {
   }
 
   /// Add a capability to the project
+  /// Stores capability in xclaude.toml [capabilities] section - entitlements are generated fresh at build time
   public static func addCapability(
     _ capabilityName: String,
     to projectDirectory: URL,
@@ -631,33 +632,37 @@ public struct CapabilityManager {
       )
     }
 
-    // Load or create entitlements
-    let entitlementsDir = projectDirectory.appendingPathComponent(".xclaude/derived")
-    try FileManager.default.createDirectory(at: entitlementsDir, withIntermediateDirectories: true)
+    // Load config
+    var config = try XClaudeConfig.load(from: projectDirectory)
 
-    let entitlementsPath = entitlementsDir.appendingPathComponent("Entitlements.plist")
-    var entitlements: [String: Any] = [:]
-
-    // Load existing entitlements if present
-    if FileManager.default.fileExists(atPath: entitlementsPath.path),
-       let data = try? Data(contentsOf: entitlementsPath),
-       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
-      entitlements = plist
+    // Initialize capabilities if needed
+    if config.capabilities == nil {
+      config.capabilities = [:]
     }
 
-    // Add the entitlement
-    let entitlementValue = value ?? (capability.defaultValue as? String) ?? capability.defaultValue
-    entitlements[capability.entitlementKey] = entitlementValue
+    // Determine the capability value
+    let capabilityValue: CapabilityValue
+    if let customValue = value {
+      capabilityValue = .string(customValue)
+    } else {
+      // Use default value based on type
+      let defaultVal = capability.defaultValue
+      if let boolVal = defaultVal as? Bool {
+        capabilityValue = .bool(boolVal)
+      } else if let strVal = defaultVal as? String {
+        capabilityValue = .string(strVal)
+      } else if let arrVal = defaultVal as? [String] {
+        capabilityValue = .array(arrVal)
+      } else {
+        capabilityValue = .bool(true)  // Fallback
+      }
+    }
 
-    // Save entitlements
-    let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
-    try plistData.write(to: entitlementsPath)
+    // Add capability to xclaude.toml [capabilities] section
+    config.capabilities?[capabilityName] = capabilityValue
 
-    // Add Info.plist usage descriptions to xclaude.toml
-    var config = try XClaudeConfig.load(from: projectDirectory)
+    // Add Info.plist usage descriptions if this capability requires them
     var infoPlistUpdates: [String: String] = [:]
-
-    // Add usage description if this capability requires one
     if let usageKey = capability.usageDescriptionKey,
        let usageDesc = value ?? capability.defaultUsageDescription {
       infoPlistUpdates[usageKey] = usageDesc
@@ -675,20 +680,23 @@ public struct CapabilityManager {
       if config.infoPlist == nil {
         config.infoPlist = [:]
       }
-      for (key, value) in infoPlistUpdates {
-        config.infoPlist?[key] = value
+      for (key, plistValue) in infoPlistUpdates {
+        config.infoPlist?[key] = plistValue
       }
-      try config.save(to: projectDirectory)
     }
+
+    // Save config (capabilities + info_plist updates)
+    try config.save(to: projectDirectory)
 
     // Build result dictionaries
     var entitlementsDict: [String: String] = [:]
-    if let strValue = entitlementValue as? String {
-      entitlementsDict[capability.entitlementKey] = strValue
-    } else if let arrValue = entitlementValue as? [String] {
-      entitlementsDict[capability.entitlementKey] = arrValue.joined(separator: ", ")
-    } else if let boolValue = entitlementValue as? Bool {
-      entitlementsDict[capability.entitlementKey] = boolValue ? "true" : "false"
+    switch capabilityValue {
+    case .bool(let b):
+      entitlementsDict[capability.entitlementKey] = b ? "true" : "false"
+    case .string(let s):
+      entitlementsDict[capability.entitlementKey] = s
+    case .array(let arr):
+      entitlementsDict[capability.entitlementKey] = arr.joined(separator: ", ")
     }
 
     var infoPlistDict: [String: String]? = nil
@@ -709,12 +717,14 @@ public struct CapabilityManager {
     // Generate platform warning for macOS-only capabilities
     var platformWarning: String? = nil
     if capability.platform == .macOS {
-      platformWarning = "'\(capabilityName)' is a macOS-only capability. It will be automatically removed when building for iOS/tvOS/visionOS."
+      platformWarning = "'\(capabilityName)' is a macOS-only capability. It will be automatically filtered out when building for iOS/tvOS/visionOS."
+    } else if capability.platform == .iOS {
+      platformWarning = "'\(capabilityName)' is an iOS-only capability. It will be automatically filtered out when building for macOS."
     }
 
     return CapabilityResult(
       success: true,
-      message: "Added \(capability.description) capability",
+      message: "Added \(capability.description) capability to xclaude.toml",
       capability: capabilityName,
       entitlements: entitlementsDict,
       infoPlistAdditions: infoPlistDict,
@@ -723,6 +733,7 @@ public struct CapabilityManager {
   }
 
   /// Remove a capability from the project
+  /// Only modifies xclaude.toml - entitlements are regenerated at build time
   public static func removeCapability(
     _ capabilityName: String,
     from projectDirectory: URL
@@ -740,35 +751,28 @@ public struct CapabilityManager {
       )
     }
 
-    var removedEntitlements: [String: String] = [:]
+    var removedCapability = false
     var removedInfoPlist: [String: String] = [:]
 
-    // Remove from Entitlements.plist
-    let entitlementsDir = projectDirectory.appendingPathComponent(".xclaude/derived")
-    let entitlementsPath = entitlementsDir.appendingPathComponent("Entitlements.plist")
+    // Load config
+    var config = try XClaudeConfig.load(from: projectDirectory)
 
-    if FileManager.default.fileExists(atPath: entitlementsPath.path),
-       let data = try? Data(contentsOf: entitlementsPath),
-       var entitlements = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
-      if entitlements[capability.entitlementKey] != nil {
-        removedEntitlements[capability.entitlementKey] = "removed"
-        entitlements.removeValue(forKey: capability.entitlementKey)
-        let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
-        try plistData.write(to: entitlementsPath)
+    // Remove from [capabilities] section
+    if var capabilities = config.capabilities {
+      if capabilities[capabilityName] != nil {
+        capabilities.removeValue(forKey: capabilityName)
+        config.capabilities = capabilities.isEmpty ? nil : capabilities
+        removedCapability = true
       }
     }
 
-    // Remove usage descriptions from xclaude.toml
-    var config = try XClaudeConfig.load(from: projectDirectory)
-    var configChanged = false
-
+    // Remove usage descriptions from [info_plist] section
     if var infoPlist = config.infoPlist {
       // Remove primary usage description
       if let usageKey = capability.usageDescriptionKey,
          infoPlist[usageKey] != nil {
         removedInfoPlist[usageKey] = "removed"
         infoPlist.removeValue(forKey: usageKey)
-        configChanged = true
       }
 
       // Remove additional usage descriptions
@@ -777,26 +781,33 @@ public struct CapabilityManager {
           if infoPlist[key] != nil {
             removedInfoPlist[key] = "removed"
             infoPlist.removeValue(forKey: key)
-            configChanged = true
           }
         }
       }
 
-      if configChanged {
-        config.infoPlist = infoPlist.isEmpty ? nil : infoPlist
-        try config.save(to: projectDirectory)
-      }
+      config.infoPlist = infoPlist.isEmpty ? nil : infoPlist
     }
 
-    if removedEntitlements.isEmpty && removedInfoPlist.isEmpty {
+    // Save if anything was changed
+    if removedCapability || !removedInfoPlist.isEmpty {
+      try config.save(to: projectDirectory)
+    }
+
+    if !removedCapability && removedInfoPlist.isEmpty {
       return CapabilityResult(
         success: false,
-        message: "Capability '\(capability.description)' was not found in project",
+        message: "Capability '\(capability.description)' was not found in xclaude.toml",
         capability: capabilityName,
         entitlements: nil,
         infoPlistAdditions: nil,
         platformWarning: nil
       )
+    }
+
+    // Build removed entitlements info for result
+    var removedEntitlements: [String: String] = [:]
+    if removedCapability {
+      removedEntitlements[capability.entitlementKey] = "removed"
     }
 
     return CapabilityResult(

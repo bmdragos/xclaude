@@ -473,12 +473,13 @@ extension SigningDiscovery {
       identity = try await findMatchingIdentity(teamId: profile.teamId, signingData: signingData)
     }
 
-    // Generate entitlements file
+    // Generate entitlements file (fresh each build from xclaude.toml capabilities)
     let entitlementsPath = try generateEntitlements(
       bundleId: bundleId,
       teamId: profile.teamId,
       projectDirectory: projectDirectory,
-      platform: platform
+      platform: platform,
+      config: config
     )
 
     return ResolvedSigning(
@@ -490,72 +491,23 @@ extension SigningDiscovery {
   }
 
   /// Generate entitlements plist for code signing
-  /// Merges required signing entitlements with any capability entitlements
-  /// Filters out platform-incompatible entitlements (e.g., macOS sandbox entitlements for iOS builds)
+  /// Regenerates fresh each build from xclaude.toml capabilities - no persistent state
+  /// Filters out platform-incompatible entitlements automatically
   public func generateEntitlements(
     bundleId: String,
     teamId: String,
     projectDirectory: URL,
-    platform: String = "iOS"
+    platform: String = "iOS",
+    config: XClaudeConfig? = nil
   ) throws -> URL {
     let derivedDir = projectDirectory.appendingPathComponent(".xclaude/derived")
     try FileManager.default.createDirectory(at: derivedDir, withIntermediateDirectories: true)
 
     let entitlementsPath = derivedDir.appendingPathComponent("Entitlements.plist")
-
-    // Start with any existing capability entitlements
-    var entitlements: [String: Any] = [:]
-    if FileManager.default.fileExists(atPath: entitlementsPath.path),
-       let data = try? Data(contentsOf: entitlementsPath),
-       let existing = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
-      entitlements = existing
-    }
-
-    // Filter out platform-incompatible entitlements
     let isMacOS = platform.lowercased().contains("macos")
-    if !isMacOS {
-      // Remove macOS App Sandbox entitlements when building for iOS/tvOS/visionOS
-      // macOS App Sandbox entitlements - invalid on iOS
-      // These capabilities use Info.plist usage descriptions on iOS instead
-      let macOSOnlyEntitlements = [
-        // App Sandbox core
-        "com.apple.security.app-sandbox",
-        // Hardware access (use Info.plist on iOS)
-        "com.apple.security.device.bluetooth",
-        "com.apple.security.device.camera",
-        "com.apple.security.device.audio-input",
-        "com.apple.security.device.usb",
-        "com.apple.security.device.serial",
-        // Personal information (use Info.plist on iOS)
-        "com.apple.security.personal-information.location",
-        "com.apple.security.personal-information.addressbook",
-        "com.apple.security.personal-information.calendars",
-        "com.apple.security.personal-information.photos-library",
-        // Network
-        "com.apple.security.network.client",
-        "com.apple.security.network.server",
-        // Files
-        "com.apple.security.files.user-selected.read-only",
-        "com.apple.security.files.user-selected.read-write",
-        "com.apple.security.files.downloads.read-only",
-        "com.apple.security.files.downloads.read-write",
-        // Other macOS-only
-        "com.apple.security.print",
-        "com.apple.security.automation.apple-events",
-        // Code signing flags (macOS only)
-        "com.apple.security.cs.allow-jit",
-        "com.apple.security.cs.allow-unsigned-executable-memory",
-        "com.apple.security.cs.allow-dyld-environment-variables",
-        "com.apple.security.cs.disable-library-validation",
-        // get-task-allow variants (iOS uses "get-task-allow", macOS uses "com.apple.security.get-task-allow")
-        "com.apple.security.get-task-allow"
-      ]
-      for key in macOSOnlyEntitlements {
-        if entitlements.removeValue(forKey: key) != nil {
-          // Log that we removed an incompatible entitlement (silent for now)
-        }
-      }
-    }
+
+    // Start fresh - don't merge with existing file
+    var entitlements: [String: Any] = [:]
 
     // Add required signing entitlements
     let appIdentifier = "\(teamId).\(bundleId)"
@@ -563,6 +515,36 @@ extension SigningDiscovery {
     entitlements["com.apple.developer.team-identifier"] = teamId
     entitlements["get-task-allow"] = true  // Required for development signing
     entitlements["keychain-access-groups"] = [appIdentifier]
+
+    // Add entitlements from capabilities in xclaude.toml
+    if let capabilities = config?.capabilities {
+      // Map capability names to entitlement keys using CapabilityManager.Capability
+      for (capName, capValue) in capabilities {
+        guard let capability = CapabilityManager.Capability(rawValue: capName) else {
+          continue  // Skip unknown capabilities
+        }
+
+        // Skip platform-incompatible capabilities
+        switch capability.platform {
+        case .macOS where !isMacOS:
+          continue  // Skip macOS-only capabilities on iOS
+        case .iOS where isMacOS:
+          continue  // Skip iOS-only capabilities on macOS
+        default:
+          break  // .both capabilities are always included
+        }
+
+        // Add entitlement with user-provided value or default
+        entitlements[capability.entitlementKey] = capValue.anyValue
+      }
+    }
+
+    // macOS-specific: ensure proper get-task-allow variant
+    if isMacOS {
+      // macOS uses com.apple.security.get-task-allow
+      entitlements.removeValue(forKey: "get-task-allow")
+      entitlements["com.apple.security.get-task-allow"] = true
+    }
 
     // Write entitlements
     let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
