@@ -1027,7 +1027,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "asc_create_app",
-      description: "Create a new app in App Store Connect. Requires bundle ID to be registered first.",
+      description: "Create a new app in App Store Connect. NOTE: Apple's API does not actually support this - will return manual instructions instead. Requires bundle ID to be registered first.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -5829,6 +5829,8 @@ public enum MCPTools {
     let success: Bool
     let app: ASCAppInfo?
     let error: String?
+    let appleApiLimitation: Bool?
+    let manualSteps: [String]?
   }
 
   static func ascCreateApp(arguments: [String: Any]) async throws -> String {
@@ -5854,7 +5856,9 @@ public enum MCPTools {
       return encodeJSON(ASCCreateAppResult(
         success: false,
         app: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: "Not configured. Use asc_configure to set up credentials.",
+        appleApiLimitation: nil,
+        manualSteps: nil
       ))
     }
 
@@ -5864,7 +5868,9 @@ public enum MCPTools {
         return encodeJSON(ASCCreateAppResult(
           success: false,
           app: nil,
-          error: "Bundle ID '\(bundleIdIdentifier)' not found. Register it first with asc_create_bundle_id."
+          error: "Bundle ID '\(bundleIdIdentifier)' not found. Register it first with asc_create_bundle_id.",
+          appleApiLimitation: nil,
+          manualSteps: nil
         ))
       }
 
@@ -5881,19 +5887,44 @@ public enum MCPTools {
           name: app.attributes.name,
           bundleId: app.attributes.bundleId
         ),
-        error: nil
+        error: nil,
+        appleApiLimitation: nil,
+        manualSteps: nil
       ))
     } catch let error as AppStoreConnectClient.ASCError {
+      // Check for Apple's API limitation on creating apps
+      if case .apiError(let code, _) = error, code == "FORBIDDEN_ERROR" {
+        return encodeJSON(ASCCreateAppResult(
+          success: false,
+          app: nil,
+          error: "Apple's App Store Connect API does not support creating apps programmatically. This is an Apple limitation, not a permissions issue.",
+          appleApiLimitation: true,
+          manualSteps: [
+            "Go to https://appstoreconnect.apple.com",
+            "Click the '+' button → 'New App'",
+            "Select iOS platform",
+            "Name: \(name)",
+            "Bundle ID: \(bundleIdIdentifier) (select from dropdown)",
+            "SKU: \(sku)",
+            "Click 'Create'",
+            "Then use asc_list_apps to get the app ID for further automation"
+          ]
+        ))
+      }
       return encodeJSON(ASCCreateAppResult(
         success: false,
         app: nil,
-        error: error.errorDescription
+        error: error.errorDescription,
+        appleApiLimitation: nil,
+        manualSteps: nil
       ))
     } catch {
       return encodeJSON(ASCCreateAppResult(
         success: false,
         app: nil,
-        error: error.localizedDescription
+        error: error.localizedDescription,
+        appleApiLimitation: nil,
+        manualSteps: nil
       ))
     }
   }
