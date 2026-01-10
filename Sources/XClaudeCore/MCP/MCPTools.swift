@@ -571,7 +571,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "upload",
-      description: "Upload an app to App Store Connect. Auto-uses credentials from asc_configure if set, or provide them explicitly.",
+      description: "Upload an app to App Store Connect for TestFlight/App Store distribution. PREREQUISITE: The app must exist in App Store Connect first - create it manually at appstoreconnect.apple.com (Apple's API doesn't support app creation). Auto-uses credentials from asc_configure if set.",
       inputSchema: [
         "type": "object",
         "properties": [
