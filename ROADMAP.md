@@ -4,6 +4,58 @@ Feature ideas and implementation notes for future development.
 
 ## High Priority
 
+### App Store Connect API Integration
+
+**Problem**: Managing TestFlight, devices, and provisioning profiles requires manual portal work.
+
+**Solution**: Integrate App Store Connect API to automate the annoying console tasks.
+
+**Capabilities**:
+
+1. **Device Registration**
+   - `register_device(udid, name)` - register new device directly
+   - Auto-fix "device not in profile" by registering + regenerating profile
+   - List registered devices
+
+2. **Provisioning Profiles**
+   - `regenerate_profile(bundle_id)` - create/update profile with all devices
+   - Auto-include newly registered devices
+   - Download and install profiles automatically
+
+3. **TestFlight**
+   - `upload_to_testflight()` - upload build (wraps existing upload with better UX)
+   - `add_tester(email, group?)` - add beta testers
+   - `list_testers()` - see who has access
+   - `set_whats_new(text)` - update release notes
+   - `submit_for_review()` - submit build for beta review
+
+**Authentication**:
+- JWT-based auth using .p8 private key from App Store Connect
+- User provides: API Key ID, Issuer ID, path to .p8 file
+- Store in xclaude.toml `[app_store_connect]` section or `~/.xclaude/asc_credentials.json`
+
+**Implementation**:
+- Use URLSession with JWT signing
+- API base: `https://api.appstoreconnect.apple.com/v1/`
+- JWT library: Can use CryptoKit for ES256 signing
+
+**Workflow improvement**:
+```
+# Before: manual hell
+1. Get device UDID from devicectl
+2. Log into Apple Developer Portal
+3. Add device
+4. Regenerate provisioning profile
+5. Download profile
+6. Build again
+
+# After: one command
+xclaude: register_device(udid: "00008130-...", name: "Test iPhone")
+→ Device registered, profile regenerated, ready to build
+```
+
+---
+
 ### Device App Logs
 
 **Problem**: Can't see app logs from physical devices. `get_logs` only works for simulator.
