@@ -441,6 +441,163 @@ public actor AppStoreConnectClient {
     return iosDist + appleDist
   }
 
+  // MARK: - TestFlight Beta Testers
+
+  /// List beta testers, optionally filtered by app or group
+  public func listBetaTesters(appId: String? = nil, groupId: String? = nil) async throws -> [BetaTesterData] {
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: "200")
+    ]
+
+    if let appId = appId {
+      queryItems.append(URLQueryItem(name: "filter[apps]", value: appId))
+    }
+
+    if let groupId = groupId {
+      queryItems.append(URLQueryItem(name: "filter[betaGroups]", value: groupId))
+    }
+
+    let response: BetaTesterListResponse = try await get("betaTesters", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Create a new beta tester and optionally add to groups
+  public func createBetaTester(email: String, firstName: String?, lastName: String?, betaGroupIds: [String]?) async throws -> BetaTesterData {
+    let request = BetaTesterCreateRequest(
+      email: email,
+      firstName: firstName,
+      lastName: lastName,
+      betaGroupIds: betaGroupIds
+    )
+    let response: BetaTesterResponse = try await post("betaTesters", body: request)
+    return response.data
+  }
+
+  /// Find a beta tester by email
+  public func findBetaTester(email: String) async throws -> BetaTesterData? {
+    let response: BetaTesterListResponse = try await get("betaTesters", queryItems: [
+      URLQueryItem(name: "filter[email]", value: email)
+    ])
+    return response.data.first
+  }
+
+  /// Delete a beta tester
+  public func deleteBetaTester(id: String) async throws {
+    try await delete("betaTesters/\(id)")
+  }
+
+  // MARK: - TestFlight Beta Groups
+
+  /// List beta groups for an app
+  public func listBetaGroups(appId: String? = nil) async throws -> [BetaGroupData] {
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: "200")
+    ]
+
+    if let appId = appId {
+      queryItems.append(URLQueryItem(name: "filter[app]", value: appId))
+    }
+
+    let response: BetaGroupListResponse = try await get("betaGroups", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Add testers to a beta group
+  public func addTestersToGroup(groupId: String, testerIds: [String]) async throws {
+    let request = BetaGroupTesterAddRequest(testerIds: testerIds)
+    // This is a relationship endpoint, needs special handling
+    var urlRequest = URLRequest(url: baseURL.appendingPathComponent("betaGroups/\(groupId)/relationships/betaTesters"))
+    urlRequest.httpMethod = "POST"
+    let token = try getToken()
+    urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    urlRequest.httpBody = try JSONEncoder().encode(request)
+
+    let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw ASCError.requestFailed(0, "Invalid response type")
+    }
+
+    if httpResponse.statusCode >= 400 {
+      if let errorResponse = try? JSONDecoder().decode(ASCErrorResponse.self, from: data),
+         let firstError = errorResponse.errors.first {
+        throw ASCError.apiError(firstError.code, firstError.detail)
+      }
+      throw ASCError.requestFailed(httpResponse.statusCode, String(data: data, encoding: .utf8) ?? "Unknown error")
+    }
+  }
+
+  // MARK: - TestFlight Builds
+
+  /// List builds for an app
+  public func listBuilds(appId: String, limit: Int = 10) async throws -> [BuildData] {
+    let response: BuildListResponse = try await get("builds", queryItems: [
+      URLQueryItem(name: "filter[app]", value: appId),
+      URLQueryItem(name: "sort", value: "-uploadedDate"),
+      URLQueryItem(name: "limit", value: String(limit))
+    ])
+    return response.data
+  }
+
+  /// Get build localizations (What's New text)
+  public func getBuildLocalizations(buildId: String) async throws -> [BetaBuildLocalizationData] {
+    let response: BetaBuildLocalizationListResponse = try await get("builds/\(buildId)/betaBuildLocalizations")
+    return response.data
+  }
+
+  /// Set What's New text for a build
+  public func setWhatsNew(buildId: String, locale: String = "en-US", whatsNew: String) async throws -> BetaBuildLocalizationData {
+    // First check if localization exists
+    let existing = try await getBuildLocalizations(buildId: buildId)
+
+    if let existingLoc = existing.first(where: { $0.attributes.locale == locale }) {
+      // Update existing
+      let request = BetaBuildLocalizationUpdateRequest(id: existingLoc.id, whatsNew: whatsNew)
+      let response: BetaBuildLocalizationResponse = try await patch("betaBuildLocalizations/\(existingLoc.id)", body: request)
+      return response.data
+    } else {
+      // Create new
+      let request = BetaBuildLocalizationCreateRequest(buildId: buildId, locale: locale, whatsNew: whatsNew)
+      let response: BetaBuildLocalizationResponse = try await post("betaBuildLocalizations", body: request)
+      return response.data
+    }
+  }
+
+  /// Make an authenticated PATCH request
+  public func patch<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+    let token = try getToken()
+
+    var request = URLRequest(url: baseURL.appendingPathComponent(path))
+    request.httpMethod = "PATCH"
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let encoder = JSONEncoder()
+    request.httpBody = try encoder.encode(body)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw ASCError.requestFailed(0, "Invalid response type")
+    }
+
+    if httpResponse.statusCode >= 400 {
+      if let errorResponse = try? JSONDecoder().decode(ASCErrorResponse.self, from: data),
+         let firstError = errorResponse.errors.first {
+        throw ASCError.apiError(firstError.code, firstError.detail)
+      }
+      throw ASCError.requestFailed(httpResponse.statusCode, String(data: data, encoding: .utf8) ?? "Unknown error")
+    }
+
+    do {
+      let decoder = JSONDecoder()
+      return try decoder.decode(T.self, from: data)
+    } catch {
+      throw ASCError.decodingFailed(error.localizedDescription)
+    }
+  }
+
   // MARK: - Test Connection
 
   /// Test the API connection by fetching apps
@@ -686,5 +843,214 @@ public struct CertificateListResponse: Decodable {
     public let name: String?
     public let certificateType: String
     public let expirationDate: String?
+  }
+}
+
+// MARK: - TestFlight Types
+
+public struct BetaTesterListResponse: Decodable {
+  public let data: [BetaTesterData]
+}
+
+public struct BetaTesterResponse: Decodable {
+  public let data: BetaTesterData
+}
+
+public struct BetaTesterData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: BetaTesterAttributes
+}
+
+public struct BetaTesterAttributes: Decodable {
+  public let email: String?
+  public let firstName: String?
+  public let lastName: String?
+  public let inviteType: String?
+  public let state: String?
+}
+
+struct BetaTesterCreateRequest: Encodable {
+  let data: BetaTesterCreateData
+
+  struct BetaTesterCreateData: Encodable {
+    let type: String
+    let attributes: BetaTesterCreateAttributes
+    let relationships: BetaTesterRelationships?
+  }
+
+  struct BetaTesterCreateAttributes: Encodable {
+    let email: String
+    let firstName: String?
+    let lastName: String?
+  }
+
+  struct BetaTesterRelationships: Encodable {
+    let betaGroups: BetaGroupsRelationship?
+  }
+
+  struct BetaGroupsRelationship: Encodable {
+    let data: [BetaGroupRelData]
+  }
+
+  struct BetaGroupRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(email: String, firstName: String?, lastName: String?, betaGroupIds: [String]?) {
+    let relationships: BetaTesterRelationships?
+    if let groupIds = betaGroupIds, !groupIds.isEmpty {
+      relationships = BetaTesterRelationships(
+        betaGroups: BetaGroupsRelationship(
+          data: groupIds.map { BetaGroupRelData(type: "betaGroups", id: $0) }
+        )
+      )
+    } else {
+      relationships = nil
+    }
+
+    self.data = BetaTesterCreateData(
+      type: "betaTesters",
+      attributes: BetaTesterCreateAttributes(
+        email: email,
+        firstName: firstName,
+        lastName: lastName
+      ),
+      relationships: relationships
+    )
+  }
+}
+
+public struct BetaGroupListResponse: Decodable {
+  public let data: [BetaGroupData]
+}
+
+public struct BetaGroupData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: BetaGroupAttributes
+}
+
+public struct BetaGroupAttributes: Decodable {
+  public let name: String
+  public let isInternalGroup: Bool?
+  public let publicLinkEnabled: Bool?
+  public let publicLink: String?
+}
+
+struct BetaGroupTesterAddRequest: Encodable {
+  let data: [BetaTesterRelData]
+
+  struct BetaTesterRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(testerIds: [String]) {
+    self.data = testerIds.map { BetaTesterRelData(type: "betaTesters", id: $0) }
+  }
+}
+
+public struct BuildListResponse: Decodable {
+  public let data: [BuildData]
+}
+
+public struct BuildData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: BuildAttributes
+}
+
+public struct BuildAttributes: Decodable {
+  public let version: String?
+  public let uploadedDate: String?
+  public let expirationDate: String?
+  public let expired: Bool?
+  public let processingState: String?
+  public let usesNonExemptEncryption: Bool?
+}
+
+public struct BetaBuildLocalizationListResponse: Decodable {
+  public let data: [BetaBuildLocalizationData]
+}
+
+public struct BetaBuildLocalizationResponse: Decodable {
+  public let data: BetaBuildLocalizationData
+}
+
+public struct BetaBuildLocalizationData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: BetaBuildLocalizationAttributes
+}
+
+public struct BetaBuildLocalizationAttributes: Decodable {
+  public let locale: String?
+  public let whatsNew: String?
+}
+
+struct BetaBuildLocalizationCreateRequest: Encodable {
+  let data: BetaBuildLocalizationCreateData
+
+  struct BetaBuildLocalizationCreateData: Encodable {
+    let type: String
+    let attributes: BetaBuildLocalizationCreateAttributes
+    let relationships: BetaBuildLocalizationRelationships
+  }
+
+  struct BetaBuildLocalizationCreateAttributes: Encodable {
+    let locale: String
+    let whatsNew: String?
+  }
+
+  struct BetaBuildLocalizationRelationships: Encodable {
+    let build: BuildRelationship
+  }
+
+  struct BuildRelationship: Encodable {
+    let data: BuildRelData
+  }
+
+  struct BuildRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(buildId: String, locale: String, whatsNew: String?) {
+    self.data = BetaBuildLocalizationCreateData(
+      type: "betaBuildLocalizations",
+      attributes: BetaBuildLocalizationCreateAttributes(
+        locale: locale,
+        whatsNew: whatsNew
+      ),
+      relationships: BetaBuildLocalizationRelationships(
+        build: BuildRelationship(
+          data: BuildRelData(type: "builds", id: buildId)
+        )
+      )
+    )
+  }
+}
+
+struct BetaBuildLocalizationUpdateRequest: Encodable {
+  let data: BetaBuildLocalizationUpdateData
+
+  struct BetaBuildLocalizationUpdateData: Encodable {
+    let type: String
+    let id: String
+    let attributes: BetaBuildLocalizationUpdateAttributes
+  }
+
+  struct BetaBuildLocalizationUpdateAttributes: Encodable {
+    let whatsNew: String?
+  }
+
+  init(id: String, whatsNew: String?) {
+    self.data = BetaBuildLocalizationUpdateData(
+      type: "betaBuildLocalizations",
+      id: id,
+      attributes: BetaBuildLocalizationUpdateAttributes(whatsNew: whatsNew)
+    )
   }
 }

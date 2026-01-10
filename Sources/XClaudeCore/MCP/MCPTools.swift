@@ -871,6 +871,129 @@ public enum MCPTools {
         "required": ["bundle_id"] as [String]
       ]
     ),
+    // TestFlight tools
+    Tool(
+      name: "asc_list_testers",
+      description: "List beta testers for TestFlight. Can filter by app or beta group.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "app_id": [
+            "type": "string",
+            "description": "Filter testers by app ID (from apps list)"
+          ],
+          "group_id": [
+            "type": "string",
+            "description": "Filter testers by beta group ID"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_add_tester",
+      description: "Add a beta tester to TestFlight. Optionally add to specific beta groups.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "email": [
+            "type": "string",
+            "description": "Tester's email address"
+          ],
+          "first_name": [
+            "type": "string",
+            "description": "Tester's first name (optional)"
+          ],
+          "last_name": [
+            "type": "string",
+            "description": "Tester's last name (optional)"
+          ],
+          "group_ids": [
+            "type": "array",
+            "items": ["type": "string"],
+            "description": "Beta group IDs to add tester to (optional)"
+          ]
+        ] as [String: Any],
+        "required": ["email"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_remove_tester",
+      description: "Remove a beta tester from TestFlight by email.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "email": [
+            "type": "string",
+            "description": "Tester's email address to remove"
+          ]
+        ] as [String: Any],
+        "required": ["email"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_list_groups",
+      description: "List beta groups for TestFlight. Shows internal and external groups.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "app_id": [
+            "type": "string",
+            "description": "Filter by app ID (optional)"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_list_builds",
+      description: "List recent builds uploaded to App Store Connect.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "app_id": [
+            "type": "string",
+            "description": "App ID to list builds for (required)"
+          ],
+          "limit": [
+            "type": "integer",
+            "description": "Number of builds to return (default: 10)"
+          ]
+        ] as [String: Any],
+        "required": ["app_id"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_set_whats_new",
+      description: "Set the 'What's New' text for a TestFlight build.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "build_id": [
+            "type": "string",
+            "description": "Build ID to update"
+          ],
+          "whats_new": [
+            "type": "string",
+            "description": "What's New text to display to testers"
+          ],
+          "locale": [
+            "type": "string",
+            "description": "Locale code (default: en-US)"
+          ]
+        ] as [String: Any],
+        "required": ["build_id", "whats_new"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_list_apps",
+      description: "List apps in App Store Connect. Useful to get app IDs for other commands.",
+      inputSchema: [
+        "type": "object",
+        "properties": [:] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
   ]
 
   /// Call a tool by name
@@ -964,6 +1087,20 @@ public enum MCPTools {
         return try await ascDownloadProfile(arguments: arguments)
       case "asc_regenerate_profile":
         return try await ascRegenerateProfile(arguments: arguments)
+      case "asc_list_testers":
+        return try await ascListTesters(arguments: arguments)
+      case "asc_add_tester":
+        return try await ascAddTester(arguments: arguments)
+      case "asc_remove_tester":
+        return try await ascRemoveTester(arguments: arguments)
+      case "asc_list_groups":
+        return try await ascListGroups(arguments: arguments)
+      case "asc_list_builds":
+        return try await ascListBuilds(arguments: arguments)
+      case "asc_set_whats_new":
+        return try await ascSetWhatsNew(arguments: arguments)
+      case "asc_list_apps":
+        return try await ascListApps()
       default:
         throw MCPError.unknownTool(name)
     }
@@ -4971,6 +5108,476 @@ public enum MCPTools {
         newProfile: nil,
         downloadPath: nil,
         deviceCount: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - TestFlight Tools
+
+  struct ASCTesterInfo: Encodable {
+    let id: String
+    let email: String?
+    let firstName: String?
+    let lastName: String?
+    let inviteType: String?
+    let state: String?
+  }
+
+  struct ASCListTestersResult: Encodable {
+    let success: Bool
+    let testers: [ASCTesterInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCAddTesterResult: Encodable {
+    let success: Bool
+    let tester: ASCTesterInfo?
+    let alreadyExists: Bool?
+    let error: String?
+  }
+
+  struct ASCRemoveTesterResult: Encodable {
+    let success: Bool
+    let error: String?
+  }
+
+  struct ASCGroupInfo: Encodable {
+    let id: String
+    let name: String
+    let isInternal: Bool?
+    let publicLinkEnabled: Bool?
+  }
+
+  struct ASCListGroupsResult: Encodable {
+    let success: Bool
+    let groups: [ASCGroupInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCBuildInfo: Encodable {
+    let id: String
+    let version: String?
+    let uploadedDate: String?
+    let processingState: String?
+    let expired: Bool?
+  }
+
+  struct ASCListBuildsResult: Encodable {
+    let success: Bool
+    let builds: [ASCBuildInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCSetWhatsNewResult: Encodable {
+    let success: Bool
+    let locale: String?
+    let whatsNew: String?
+    let error: String?
+  }
+
+  struct ASCAppInfo: Encodable {
+    let id: String
+    let name: String
+    let bundleId: String
+  }
+
+  struct ASCListAppsResult: Encodable {
+    let success: Bool
+    let apps: [ASCAppInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  static func ascListTesters(arguments: [String: Any]) async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListTestersResult(
+        success: false,
+        testers: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    let appId = arguments["app_id"] as? String
+    let groupId = arguments["group_id"] as? String
+
+    do {
+      let testers = try await AppStoreConnectClient.shared.listBetaTesters(appId: appId, groupId: groupId)
+      let testerInfos = testers.map { tester in
+        ASCTesterInfo(
+          id: tester.id,
+          email: tester.attributes.email,
+          firstName: tester.attributes.firstName,
+          lastName: tester.attributes.lastName,
+          inviteType: tester.attributes.inviteType,
+          state: tester.attributes.state
+        )
+      }
+      return encodeJSON(ASCListTestersResult(
+        success: true,
+        testers: testerInfos,
+        count: testerInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListTestersResult(
+        success: false,
+        testers: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListTestersResult(
+        success: false,
+        testers: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascAddTester(arguments: [String: Any]) async throws -> String {
+    guard let email = arguments["email"] as? String else {
+      throw ToolError.missingArgument("email")
+    }
+    let firstName = arguments["first_name"] as? String
+    let lastName = arguments["last_name"] as? String
+    let groupIds = arguments["group_ids"] as? [String]
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCAddTesterResult(
+        success: false,
+        tester: nil,
+        alreadyExists: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Check if tester already exists
+      if let existing = try await AppStoreConnectClient.shared.findBetaTester(email: email) {
+        let testerInfo = ASCTesterInfo(
+          id: existing.id,
+          email: existing.attributes.email,
+          firstName: existing.attributes.firstName,
+          lastName: existing.attributes.lastName,
+          inviteType: existing.attributes.inviteType,
+          state: existing.attributes.state
+        )
+        return encodeJSON(ASCAddTesterResult(
+          success: true,
+          tester: testerInfo,
+          alreadyExists: true,
+          error: nil
+        ))
+      }
+
+      // Create new tester
+      let tester = try await AppStoreConnectClient.shared.createBetaTester(
+        email: email,
+        firstName: firstName,
+        lastName: lastName,
+        betaGroupIds: groupIds
+      )
+      let testerInfo = ASCTesterInfo(
+        id: tester.id,
+        email: tester.attributes.email,
+        firstName: tester.attributes.firstName,
+        lastName: tester.attributes.lastName,
+        inviteType: tester.attributes.inviteType,
+        state: tester.attributes.state
+      )
+      return encodeJSON(ASCAddTesterResult(
+        success: true,
+        tester: testerInfo,
+        alreadyExists: false,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCAddTesterResult(
+        success: false,
+        tester: nil,
+        alreadyExists: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCAddTesterResult(
+        success: false,
+        tester: nil,
+        alreadyExists: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascRemoveTester(arguments: [String: Any]) async throws -> String {
+    guard let email = arguments["email"] as? String else {
+      throw ToolError.missingArgument("email")
+    }
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCRemoveTesterResult(
+        success: false,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Find tester by email
+      guard let tester = try await AppStoreConnectClient.shared.findBetaTester(email: email) else {
+        return encodeJSON(ASCRemoveTesterResult(
+          success: false,
+          error: "Tester not found: \(email)"
+        ))
+      }
+
+      try await AppStoreConnectClient.shared.deleteBetaTester(id: tester.id)
+      return encodeJSON(ASCRemoveTesterResult(
+        success: true,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCRemoveTesterResult(
+        success: false,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCRemoveTesterResult(
+        success: false,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascListGroups(arguments: [String: Any]) async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListGroupsResult(
+        success: false,
+        groups: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    let appId = arguments["app_id"] as? String
+
+    do {
+      let groups = try await AppStoreConnectClient.shared.listBetaGroups(appId: appId)
+      let groupInfos = groups.map { group in
+        ASCGroupInfo(
+          id: group.id,
+          name: group.attributes.name,
+          isInternal: group.attributes.isInternalGroup,
+          publicLinkEnabled: group.attributes.publicLinkEnabled
+        )
+      }
+      return encodeJSON(ASCListGroupsResult(
+        success: true,
+        groups: groupInfos,
+        count: groupInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListGroupsResult(
+        success: false,
+        groups: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListGroupsResult(
+        success: false,
+        groups: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascListBuilds(arguments: [String: Any]) async throws -> String {
+    guard let appId = arguments["app_id"] as? String else {
+      throw ToolError.missingArgument("app_id")
+    }
+    let limit = arguments["limit"] as? Int ?? 10
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListBuildsResult(
+        success: false,
+        builds: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let builds = try await AppStoreConnectClient.shared.listBuilds(appId: appId, limit: limit)
+      let buildInfos = builds.map { build in
+        ASCBuildInfo(
+          id: build.id,
+          version: build.attributes.version,
+          uploadedDate: build.attributes.uploadedDate,
+          processingState: build.attributes.processingState,
+          expired: build.attributes.expired
+        )
+      }
+      return encodeJSON(ASCListBuildsResult(
+        success: true,
+        builds: buildInfos,
+        count: buildInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListBuildsResult(
+        success: false,
+        builds: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListBuildsResult(
+        success: false,
+        builds: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascSetWhatsNew(arguments: [String: Any]) async throws -> String {
+    guard let buildId = arguments["build_id"] as? String else {
+      throw ToolError.missingArgument("build_id")
+    }
+    guard let whatsNew = arguments["whats_new"] as? String else {
+      throw ToolError.missingArgument("whats_new")
+    }
+    let locale = arguments["locale"] as? String ?? "en-US"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCSetWhatsNewResult(
+        success: false,
+        locale: nil,
+        whatsNew: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let localization = try await AppStoreConnectClient.shared.setWhatsNew(buildId: buildId, locale: locale, whatsNew: whatsNew)
+      return encodeJSON(ASCSetWhatsNewResult(
+        success: true,
+        locale: localization.attributes.locale,
+        whatsNew: localization.attributes.whatsNew,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCSetWhatsNewResult(
+        success: false,
+        locale: nil,
+        whatsNew: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCSetWhatsNewResult(
+        success: false,
+        locale: nil,
+        whatsNew: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascListApps() async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListAppsResult(
+        success: false,
+        apps: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let response: AppListResponse = try await AppStoreConnectClient.shared.get("apps", queryItems: [
+        URLQueryItem(name: "limit", value: "200")
+      ])
+      let appInfos = response.data.map { app in
+        ASCAppInfo(
+          id: app.id,
+          name: app.attributes.name,
+          bundleId: app.attributes.bundleId
+        )
+      }
+      return encodeJSON(ASCListAppsResult(
+        success: true,
+        apps: appInfos,
+        count: appInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListAppsResult(
+        success: false,
+        apps: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListAppsResult(
+        success: false,
+        apps: nil,
+        count: nil,
         error: error.localizedDescription
       ))
     }
