@@ -741,6 +741,46 @@ public enum MCPTools {
         "required": [] as [String]
       ]
     ),
+    Tool(
+      name: "asc_list_devices",
+      description: "List devices registered in App Store Connect. Useful to check if a device is already registered before attempting to register it.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "platform": [
+            "type": "string",
+            "description": "Filter by platform (IOS, MAC_OS, etc.)"
+          ],
+          "status": [
+            "type": "string",
+            "description": "Filter by status (ENABLED, DISABLED)"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_register_device",
+      description: "Register a new device in App Store Connect. Use list_devices first to get the UDID. After registering, you'll need to regenerate provisioning profiles to include the new device.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "name": [
+            "type": "string",
+            "description": "Device name (e.g., 'John's iPhone 15 Pro')"
+          ],
+          "udid": [
+            "type": "string",
+            "description": "Device UDID (hardware identifier, not CoreDevice UUID)"
+          ],
+          "platform": [
+            "type": "string",
+            "description": "Platform (IOS, MAC_OS). Defaults to IOS"
+          ]
+        ] as [String: Any],
+        "required": ["name", "udid"] as [String]
+      ]
+    ),
   ]
 
   /// Call a tool by name
@@ -820,6 +860,10 @@ public enum MCPTools {
         return try await ascConfigure(arguments: arguments)
       case "asc_status":
         return try await ascStatus()
+      case "asc_list_devices":
+        return try await ascListDevices(arguments: arguments)
+      case "asc_register_device":
+        return try await ascRegisterDevice(arguments: arguments)
       default:
         throw MCPError.unknownTool(name)
     }
@@ -4229,6 +4273,167 @@ public enum MCPTools {
         keyId: creds?.keyId,
         keyPath: creds?.keyPath,
         connectionTest: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Device Management
+
+  struct ASCDeviceInfo: Encodable {
+    let id: String
+    let name: String
+    let platform: String
+    let udid: String
+    let deviceClass: String
+    let status: String
+    let model: String?
+  }
+
+  struct ASCListDevicesResult: Encodable {
+    let success: Bool
+    let devices: [ASCDeviceInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCRegisterDeviceResult: Encodable {
+    let success: Bool
+    let device: ASCDeviceInfo?
+    let alreadyRegistered: Bool?
+    let error: String?
+  }
+
+  static func ascListDevices(arguments: [String: Any]) async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListDevicesResult(
+        success: false,
+        devices: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    let platform = arguments["platform"] as? String
+    let status = arguments["status"] as? String
+
+    do {
+      let devices = try await AppStoreConnectClient.shared.listDevices(platform: platform, status: status)
+      let deviceInfos = devices.map { device in
+        ASCDeviceInfo(
+          id: device.id,
+          name: device.attributes.name,
+          platform: device.attributes.platform,
+          udid: device.attributes.udid,
+          deviceClass: device.attributes.deviceClass,
+          status: device.attributes.status,
+          model: device.attributes.model
+        )
+      }
+      return encodeJSON(ASCListDevicesResult(
+        success: true,
+        devices: deviceInfos,
+        count: deviceInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListDevicesResult(
+        success: false,
+        devices: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListDevicesResult(
+        success: false,
+        devices: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascRegisterDevice(arguments: [String: Any]) async throws -> String {
+    guard let name = arguments["name"] as? String else {
+      throw ToolError.missingArgument("name")
+    }
+    guard let udid = arguments["udid"] as? String else {
+      throw ToolError.missingArgument("udid")
+    }
+    let platform = arguments["platform"] as? String ?? "IOS"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCRegisterDeviceResult(
+        success: false,
+        device: nil,
+        alreadyRegistered: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Check if device already registered
+      if let existing = try await AppStoreConnectClient.shared.findDevice(udid: udid) {
+        let deviceInfo = ASCDeviceInfo(
+          id: existing.id,
+          name: existing.attributes.name,
+          platform: existing.attributes.platform,
+          udid: existing.attributes.udid,
+          deviceClass: existing.attributes.deviceClass,
+          status: existing.attributes.status,
+          model: existing.attributes.model
+        )
+        return encodeJSON(ASCRegisterDeviceResult(
+          success: true,
+          device: deviceInfo,
+          alreadyRegistered: true,
+          error: nil
+        ))
+      }
+
+      // Register new device
+      let device = try await AppStoreConnectClient.shared.registerDevice(name: name, udid: udid, platform: platform)
+      let deviceInfo = ASCDeviceInfo(
+        id: device.id,
+        name: device.attributes.name,
+        platform: device.attributes.platform,
+        udid: device.attributes.udid,
+        deviceClass: device.attributes.deviceClass,
+        status: device.attributes.status,
+        model: device.attributes.model
+      )
+      return encodeJSON(ASCRegisterDeviceResult(
+        success: true,
+        device: deviceInfo,
+        alreadyRegistered: false,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCRegisterDeviceResult(
+        success: false,
+        device: nil,
+        alreadyRegistered: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCRegisterDeviceResult(
+        success: false,
+        device: nil,
+        alreadyRegistered: nil,
         error: error.localizedDescription
       ))
     }

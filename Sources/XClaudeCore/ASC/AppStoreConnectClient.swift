@@ -273,6 +273,42 @@ public actor AppStoreConnectClient {
     }
   }
 
+  // MARK: - Device Management
+
+  /// List all registered devices
+  public func listDevices(platform: String? = nil, status: String? = nil) async throws -> [DeviceData] {
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: "200")
+    ]
+
+    if let platform = platform {
+      queryItems.append(URLQueryItem(name: "filter[platform]", value: platform))
+    }
+
+    if let status = status {
+      queryItems.append(URLQueryItem(name: "filter[status]", value: status))
+    }
+
+    let response: DeviceListResponse = try await get("devices", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Register a new device
+  public func registerDevice(name: String, udid: String, platform: String = "IOS") async throws -> DeviceData {
+    let request = DeviceCreateRequest(name: name, udid: udid, platform: platform)
+    let response: DeviceResponse = try await post("devices", body: request)
+    return response.data
+  }
+
+  /// Check if a device is already registered
+  public func findDevice(udid: String) async throws -> DeviceData? {
+    let queryItems = [
+      URLQueryItem(name: "filter[udid]", value: udid)
+    ]
+    let response: DeviceListResponse = try await get("devices", queryItems: queryItems)
+    return response.data.first
+  }
+
   // MARK: - Test Connection
 
   /// Test the API connection by fetching apps
@@ -341,4 +377,54 @@ struct AppListResponse: Decodable {
     let bundleId: String
   }
   let data: [App]
+}
+
+struct DeviceListResponse: Decodable {
+  let data: [DeviceData]
+}
+
+struct DeviceResponse: Decodable {
+  let data: DeviceData
+}
+
+public struct DeviceData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: DeviceAttributes
+}
+
+public struct DeviceAttributes: Decodable {
+  public let name: String
+  public let platform: String
+  public let udid: String
+  public let deviceClass: String
+  public let status: String
+  public let model: String?
+  public let addedDate: String?
+}
+
+struct DeviceCreateRequest: Encodable {
+  let data: DeviceCreateData
+
+  struct DeviceCreateData: Encodable {
+    let type: String
+    let attributes: DeviceCreateAttributes
+  }
+
+  struct DeviceCreateAttributes: Encodable {
+    let name: String
+    let platform: String
+    let udid: String
+  }
+
+  init(name: String, udid: String, platform: String = "IOS") {
+    self.data = DeviceCreateData(
+      type: "devices",
+      attributes: DeviceCreateAttributes(
+        name: name,
+        platform: platform,
+        udid: udid
+      )
+    )
+  }
 }
