@@ -3563,10 +3563,11 @@ public enum MCPTools {
       try FileManager.default.copyItem(at: appURL, to: destURL)
 
       // Create .ipa by zipping Payload directory
+      // Use --norsrc to exclude AppleDouble (._*) files that break code signing
       let parentDir = payloadDir.deletingLastPathComponent()
       let zipOutput = try await runCommand(
         "/usr/bin/ditto",
-        arguments: ["-c", "-k", "--keepParent", "Payload", outputPath],
+        arguments: ["-c", "-k", "--norsrc", "--keepParent", "Payload", outputPath],
         currentDirectory: parentDir
       )
 
