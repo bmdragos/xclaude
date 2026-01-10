@@ -722,6 +722,93 @@ public struct CapabilityManager {
     )
   }
 
+  /// Remove a capability from the project
+  public static func removeCapability(
+    _ capabilityName: String,
+    from projectDirectory: URL
+  ) throws -> CapabilityResult {
+    // Parse capability
+    guard let capability = Capability(rawValue: capabilityName) else {
+      let validCaps = Capability.allCases.map { $0.rawValue }.joined(separator: ", ")
+      return CapabilityResult(
+        success: false,
+        message: "Unknown capability '\(capabilityName)'. Valid options: \(validCaps)",
+        capability: capabilityName,
+        entitlements: nil,
+        infoPlistAdditions: nil,
+        platformWarning: nil
+      )
+    }
+
+    var removedEntitlements: [String: String] = [:]
+    var removedInfoPlist: [String: String] = [:]
+
+    // Remove from Entitlements.plist
+    let entitlementsDir = projectDirectory.appendingPathComponent(".xclaude/derived")
+    let entitlementsPath = entitlementsDir.appendingPathComponent("Entitlements.plist")
+
+    if FileManager.default.fileExists(atPath: entitlementsPath.path),
+       let data = try? Data(contentsOf: entitlementsPath),
+       var entitlements = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+      if entitlements[capability.entitlementKey] != nil {
+        removedEntitlements[capability.entitlementKey] = "removed"
+        entitlements.removeValue(forKey: capability.entitlementKey)
+        let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
+        try plistData.write(to: entitlementsPath)
+      }
+    }
+
+    // Remove usage descriptions from xclaude.toml
+    var config = try XClaudeConfig.load(from: projectDirectory)
+    var configChanged = false
+
+    if var infoPlist = config.infoPlist {
+      // Remove primary usage description
+      if let usageKey = capability.usageDescriptionKey,
+         infoPlist[usageKey] != nil {
+        removedInfoPlist[usageKey] = "removed"
+        infoPlist.removeValue(forKey: usageKey)
+        configChanged = true
+      }
+
+      // Remove additional usage descriptions
+      if let additionalDescs = capability.additionalUsageDescriptions {
+        for (key, _) in additionalDescs {
+          if infoPlist[key] != nil {
+            removedInfoPlist[key] = "removed"
+            infoPlist.removeValue(forKey: key)
+            configChanged = true
+          }
+        }
+      }
+
+      if configChanged {
+        config.infoPlist = infoPlist.isEmpty ? nil : infoPlist
+        try config.save(to: projectDirectory)
+      }
+    }
+
+    if removedEntitlements.isEmpty && removedInfoPlist.isEmpty {
+      return CapabilityResult(
+        success: false,
+        message: "Capability '\(capability.description)' was not found in project",
+        capability: capabilityName,
+        entitlements: nil,
+        infoPlistAdditions: nil,
+        platformWarning: nil
+      )
+    }
+
+    return CapabilityResult(
+      success: true,
+      message: "Removed \(capability.description) capability",
+      capability: capabilityName,
+      entitlements: removedEntitlements.isEmpty ? nil : removedEntitlements,
+      infoPlistAdditions: removedInfoPlist.isEmpty ? nil : removedInfoPlist,
+      platformWarning: nil
+    )
+  }
+
   /// List all available capabilities with platform info
   public static func listCapabilities() -> [String: CapabilityInfo] {
     var result: [String: CapabilityInfo] = [:]

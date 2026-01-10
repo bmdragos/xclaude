@@ -335,6 +335,24 @@ public enum MCPTools {
       ]
     ),
     Tool(
+      name: "remove_capability",
+      description: "Remove an app capability from the project",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "capability": [
+            "type": "string",
+            "description": "Capability name to remove (e.g. 'healthkit', 'push-notifications')"
+          ],
+          "path": [
+            "type": "string",
+            "description": "Path to the project directory"
+          ]
+        ] as [String: Any],
+        "required": ["capability"] as [String]
+      ]
+    ),
+    Tool(
       name: "list_capabilities",
       description: "List all available app capabilities",
       inputSchema: [
@@ -744,6 +762,8 @@ public enum MCPTools {
         return try await updateConfig(arguments: arguments)
       case "add_capability":
         return try await addCapability(arguments: arguments)
+      case "remove_capability":
+        return try await removeCapability(arguments: arguments)
       case "list_capabilities":
         return listCapabilities()
       case "configure_signing":
@@ -1608,6 +1628,18 @@ public enum MCPTools {
     let value = arguments["value"] as? String
 
     let result = try CapabilityManager.addCapability(capability, to: projectURL, value: value)
+    return encodeJSON(result)
+  }
+
+  static func removeCapability(arguments: [String: Any]) async throws -> String {
+    guard let capability = arguments["capability"] as? String else {
+      throw ToolError.missingArgument("capability")
+    }
+
+    let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
+    let projectURL = URL(fileURLWithPath: pathStr)
+
+    let result = try CapabilityManager.removeCapability(capability, from: projectURL)
     return encodeJSON(result)
   }
 
