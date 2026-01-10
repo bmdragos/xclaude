@@ -69,15 +69,16 @@ Restart Claude Code to load the MCP server.
 
 Once configured, just ask Claude:
 
-> "Create a new iOS app called TaskMaster and run it on the simulator"
+> "Create a new iOS app called TaskMaster and deploy it to my iPhone"
 
 Claude will use xclaude to:
 1. Create the project structure
 2. Generate `Package.swift` and `xclaude.toml`
 3. Scaffold SwiftUI app code
-4. Build and deploy to the simulator
+4. Discover signing credentials
+5. Build and deploy to your device
 
-> **No signing required for simulators.** You can start building and testing iOS apps immediately. Signing is only needed when deploying to physical devices.
+> **For physical devices:** You'll need an Apple Developer account with provisioning profiles set up. Run `configure_signing` to auto-discover and apply credentials.
 
 ### Project Structure
 
@@ -115,7 +116,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 
 ## Features
 
-### 35 MCP Tools
+### 36 MCP Tools
 
 | Category | Tools |
 |----------|-------|
@@ -127,7 +128,7 @@ Most projects only need the app name. Everything else is auto-discovered.
 | **Debug** | `screenshot`, `get_logs`, `get_crash_logs`, `diagnose` |
 | **Test** | `test` |
 | **Dependencies** | `add_dependency` |
-| **Capabilities** | `add_capability`, `list_capabilities` |
+| **Capabilities** | `add_capability`, `remove_capability`, `list_capabilities` |
 | **Distribution** | `archive`, `validate`, `upload` |
 | **Scaffolding** | `generate_icon`, `add_model`, `add_extension`, `generate_api_client` |
 | **Info** | `get_version` |
@@ -147,7 +148,10 @@ This returns immediately and lets you poll for progress, similar to CI/CD job pa
 ### Example Workflows
 
 **Create and run a new app:**
-> "Create an iOS app called WeatherApp and run it on the simulator"
+> "Create an iOS app called WeatherApp and deploy it to my iPhone"
+
+**Build for Mac:**
+> "Build and run my app on macOS"
 
 **Add a SwiftData model:**
 > "Add a SwiftData model called Task with properties: id (UUID), title (String), isComplete (Bool), dueDate (Date?)"
@@ -155,14 +159,11 @@ This returns immediately and lets you poll for progress, similar to CI/CD job pa
 **Add a widget:**
 > "Add a widget extension to my app"
 
-**Deploy to physical device:**
-> "Build and deploy to my iPhone"
-
 **Prepare for App Store:**
 > "Archive my app for App Store submission"
 
 **Debug issues:**
-> "Take a screenshot of the simulator and show me the recent logs"
+> "Take a screenshot and show me the recent logs"
 
 **Add macOS automation capability:**
 > "Add the apple-events capability so my app can control other apps"
