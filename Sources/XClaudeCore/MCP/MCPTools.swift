@@ -3267,54 +3267,58 @@ public enum MCPTools {
     let configuredProfileName = configuredSigning?.profile
     let configuredIdentityName = configuredSigning?.identity
 
+    // Map export method to expected profile type
+    let expectedProfileType: ProfileType = {
+      switch exportMethod {
+      case "development": return .development
+      case "app-store": return .appStore
+      case "ad-hoc": return .adHoc
+      case "enterprise": return .enterprise
+      default: return .appStore
+      }
+    }()
+
     // Find matching profile for distribution
     let matchingProfiles = signingData.profiles.filter { profile in
-      // If config specifies a profile name, match it exactly
-      if let configuredName = configuredProfileName {
-        return profile.name == configuredName && !profile.isExpired
-      }
-
-      // Otherwise, match by bundle ID
+      // Must match bundle ID
       let matchesBundleId = profile.bundleIdPattern == bundleId ||
         (profile.isWildcard && (profile.bundleIdPattern == "*" ||
           bundleId.hasPrefix(profile.bundleIdPattern.replacingOccurrences(of: "*", with: ""))))
 
-      // For app-store/ad-hoc, prefer non-development profiles
-      // (Development profiles have "Development" in name usually)
-      let isDistribution = exportMethod == "development" ||
-        !profile.name.lowercased().contains("development")
+      guard matchesBundleId && !profile.isExpired else { return false }
 
-      return matchesBundleId && !profile.isExpired && isDistribution
-    }
-
-    // Sort profiles: configured name first, then exact matches, then by profile type preference
-    let sortedProfiles = matchingProfiles.sorted { a, b in
-      // 0. Configured profile name takes top priority
+      // If config specifies a profile name, match it - but prefer correct type when names collide
       if let configuredName = configuredProfileName {
-        if a.name == configuredName { return true }
-        if b.name == configuredName { return false }
+        return profile.name == configuredName
       }
 
-      // 1. Exact bundle ID match beats wildcard
+      // For distribution export methods, exclude development profiles
+      if exportMethod != "development" {
+        return profile.profileType != .development
+      }
+
+      return true
+    }
+
+    // Sort profiles: profile type match first, then exact bundle ID, then non-wildcard
+    let sortedProfiles = matchingProfiles.sorted { a, b in
+      // 0. Profile type matching export method takes top priority
+      let aTypeMatch = a.profileType == expectedProfileType
+      let bTypeMatch = b.profileType == expectedProfileType
+      if aTypeMatch != bTypeMatch { return aTypeMatch }
+
+      // 1. If configured name, prefer that
+      if let configuredName = configuredProfileName {
+        if a.name == configuredName && b.name != configuredName { return true }
+        if b.name == configuredName && a.name != configuredName { return false }
+      }
+
+      // 2. Exact bundle ID match beats wildcard
       let aExact = a.bundleIdPattern == bundleId
       let bExact = b.bundleIdPattern == bundleId
       if aExact != bExact { return aExact }
 
-      // 2. For app-store, prefer "App Store" in name
-      if exportMethod == "app-store" {
-        let aAppStore = a.name.lowercased().contains("app store")
-        let bAppStore = b.name.lowercased().contains("app store")
-        if aAppStore != bAppStore { return aAppStore }
-      }
-
-      // 3. For ad-hoc, prefer "Ad Hoc" in name
-      if exportMethod == "ad-hoc" {
-        let aAdHoc = a.name.lowercased().contains("ad hoc") || a.name.lowercased().contains("adhoc")
-        let bAdHoc = b.name.lowercased().contains("ad hoc") || b.name.lowercased().contains("adhoc")
-        if aAdHoc != bAdHoc { return aAdHoc }
-      }
-
-      // 4. Non-wildcard beats wildcard
+      // 3. Non-wildcard beats wildcard
       if a.isWildcard != b.isWildcard { return !a.isWildcard }
 
       return false

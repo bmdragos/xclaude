@@ -140,6 +140,14 @@ public struct SigningIdentity: Codable {
   }
 }
 
+/// Profile type based on provisioning method
+public enum ProfileType: String, Codable {
+  case development = "development"
+  case appStore = "app-store"
+  case adHoc = "ad-hoc"
+  case enterprise = "enterprise"
+}
+
 /// Provisioning profile
 public struct ProvisioningProfile: Codable {
   public let uuid: String
@@ -151,11 +159,12 @@ public struct ProvisioningProfile: Codable {
   public let expiresAt: Date
   public let isWildcard: Bool
   public let isExpired: Bool
+  public let profileType: ProfileType
 
   public init(
     uuid: String, name: String, path: String, teamId: String,
     bundleIdPattern: String, platforms: [String], expiresAt: Date,
-    isWildcard: Bool, isExpired: Bool
+    isWildcard: Bool, isExpired: Bool, profileType: ProfileType = .development
   ) {
     self.uuid = uuid
     self.name = name
@@ -166,6 +175,7 @@ public struct ProvisioningProfile: Codable {
     self.expiresAt = expiresAt
     self.isWildcard = isWildcard
     self.isExpired = isExpired
+    self.profileType = profileType
   }
 }
 

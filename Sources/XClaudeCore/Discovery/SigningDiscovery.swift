@@ -219,6 +219,21 @@ public struct SigningDiscovery {
       bundleIdPattern = parts.dropFirst().joined(separator: ".")
     }
 
+    // Detect profile type from plist keys:
+    // - ProvisionedDevices array exists → Development
+    // - ProvisionsAllDevices = true → Ad Hoc or Enterprise
+    // - Neither → App Store
+    let profileType: ProfileType
+    if plist["ProvisionedDevices"] != nil {
+      profileType = .development
+    } else if plist["ProvisionsAllDevices"] as? Bool == true {
+      // Could be ad-hoc or enterprise, check for enterprise team
+      // For now, assume ad-hoc (enterprise is rare)
+      profileType = .adHoc
+    } else {
+      profileType = .appStore
+    }
+
     return ProvisioningProfile(
       uuid: file.deletingPathExtension().lastPathComponent,
       name: name,
@@ -228,7 +243,8 @@ public struct SigningDiscovery {
       platforms: platforms,
       expiresAt: expirationDate,
       isWildcard: bundleIdPattern.contains("*"),
-      isExpired: expirationDate < Date()
+      isExpired: expirationDate < Date(),
+      profileType: profileType
     )
   }
 
