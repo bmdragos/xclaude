@@ -528,7 +528,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "archive",
-      description: "Create a release build and package as .ipa for iOS distribution. IMPORTANT: For app-store/ad-hoc, requires 'Apple Distribution' certificate (NOT 'Developer ID Application' which is macOS-only).",
+      description: "Create a release build and package as .ipa for iOS distribution. Automatically sets ITSAppUsesNonExemptEncryption=false to skip export compliance (override in [info_plist] if using custom encryption). Requires 'Apple Distribution' certificate for app-store/ad-hoc.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -3482,6 +3482,17 @@ public enum MCPTools {
         arguments: ["-c", "Add :UIRequiredDeviceCapabilities array", infoPlistPath])
       _ = try? runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :UIRequiredDeviceCapabilities:0 string arm64", infoPlistPath])
+
+      // Add ITSAppUsesNonExemptEncryption = false to skip export compliance dialog
+      // Most apps only use Apple's standard encryption (HTTPS), not custom encryption
+      // Can be overridden in xclaude.toml [info_plist] if app uses custom encryption
+      let hasExplicitEncryptionKey = config.infoPlist?["ITSAppUsesNonExemptEncryption"] != nil
+      if !hasExplicitEncryptionKey {
+        _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+          arguments: ["-c", "Add :ITSAppUsesNonExemptEncryption bool false", infoPlistPath])
+        _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+          arguments: ["-c", "Set :ITSAppUsesNonExemptEncryption false", infoPlistPath])
+      }
     }
 
     // Generate distribution entitlements (get-task-allow = false for distribution)
