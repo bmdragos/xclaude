@@ -184,6 +184,9 @@ stop_device_logs(session_id)   → { lines: [...] }
 - [x] Device family targeting:
   - New `devices = ["iphone"]` config in [app] section
   - Translates to UIDeviceFamily in Info.plist
+- [x] IPA code signing fix:
+  - Exclude AppleDouble (._*) files from IPA archives
+  - Fixes "a sealed resource is missing or invalid" validation errors
 
 ### v3.9.0
 - [x] App Store Connect API integration (24 tools)
