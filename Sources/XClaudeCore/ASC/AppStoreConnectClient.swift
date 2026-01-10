@@ -465,6 +465,45 @@ public actor AppStoreConnectClient {
     return iosDist + appleDist
   }
 
+  /// Get a single certificate by ID (includes certificateContent for download)
+  public func getCertificate(id: String) async throws -> CertificateListResponse.CertificateData {
+    let response: CertificateResponse = try await get("certificates/\(id)")
+    return response.data
+  }
+
+  /// Create a new certificate from a CSR
+  /// - Parameters:
+  ///   - csrContent: The CSR in PEM format (including BEGIN/END markers)
+  ///   - certificateType: One of: IOS_DEVELOPMENT, IOS_DISTRIBUTION, MAC_APP_DEVELOPMENT,
+  ///                      MAC_APP_DISTRIBUTION, MAC_INSTALLER_DISTRIBUTION, DEVELOPER_ID_KEXT,
+  ///                      DEVELOPER_ID_APPLICATION, DEVELOPMENT, DISTRIBUTION
+  public func createCertificate(csrContent: String, certificateType: String) async throws -> CertificateListResponse.CertificateData {
+    let request = CertificateCreateRequest(csrContent: csrContent, certificateType: certificateType)
+    let response: CertificateResponse = try await post("certificates", body: request)
+    return response.data
+  }
+
+  /// Revoke (delete) a certificate
+  public func revokeCertificate(id: String) async throws {
+    try await delete("certificates/\(id)")
+  }
+
+  /// Download certificate content and save to file
+  public func downloadCertificate(id: String, to path: String) async throws {
+    let cert = try await getCertificate(id: id)
+
+    guard let content = cert.attributes.certificateContent else {
+      throw ASCError.decodingFailed("Certificate has no content")
+    }
+
+    guard let data = Data(base64Encoded: content) else {
+      throw ASCError.decodingFailed("Failed to decode certificate content")
+    }
+
+    let url = URL(fileURLWithPath: path)
+    try data.write(to: url)
+  }
+
   // MARK: - TestFlight Beta Testers
 
   /// List beta testers, optionally filtered by app or group
@@ -898,8 +937,39 @@ public struct CertificateListResponse: Decodable {
 
   public struct CertificateAttributes: Decodable {
     public let name: String?
+    public let displayName: String?
     public let certificateType: String
     public let expirationDate: String?
+    public let serialNumber: String?
+    public let certificateContent: String?  // Base64 encoded certificate
+  }
+}
+
+struct CertificateResponse: Decodable {
+  let data: CertificateListResponse.CertificateData
+}
+
+struct CertificateCreateRequest: Encodable {
+  let data: CertificateCreateData
+
+  struct CertificateCreateData: Encodable {
+    let type: String
+    let attributes: CertificateCreateAttributes
+  }
+
+  struct CertificateCreateAttributes: Encodable {
+    let csrContent: String
+    let certificateType: String
+  }
+
+  init(csrContent: String, certificateType: String) {
+    self.data = CertificateCreateData(
+      type: "certificates",
+      attributes: CertificateCreateAttributes(
+        csrContent: csrContent,
+        certificateType: certificateType
+      )
+    )
   }
 }
 

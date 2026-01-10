@@ -871,6 +871,54 @@ public enum MCPTools {
         "required": ["bundle_id"] as [String]
       ]
     ),
+    // Certificate tools
+    Tool(
+      name: "asc_list_certificates",
+      description: "List certificates in App Store Connect. Shows certificate type, name, expiration, and ID.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "certificate_type": [
+            "type": "string",
+            "description": "Filter by type: IOS_DEVELOPMENT, IOS_DISTRIBUTION, DEVELOPMENT, DISTRIBUTION, DEVELOPER_ID_APPLICATION, DEVELOPER_ID_KEXT, MAC_APP_DEVELOPMENT, MAC_APP_DISTRIBUTION"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_create_certificate",
+      description: "Create a new signing certificate. Generates a CSR, submits to Apple, downloads the certificate, and installs to keychain. For iOS App Store/TestFlight, use type 'DISTRIBUTION'. For development, use 'DEVELOPMENT'.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "certificate_type": [
+            "type": "string",
+            "description": "Certificate type: DISTRIBUTION (for App Store/TestFlight), DEVELOPMENT (for dev builds), DEVELOPER_ID_APPLICATION (macOS direct distribution)",
+            "enum": ["DISTRIBUTION", "DEVELOPMENT", "DEVELOPER_ID_APPLICATION", "DEVELOPER_ID_KEXT", "IOS_DEVELOPMENT", "IOS_DISTRIBUTION", "MAC_APP_DEVELOPMENT", "MAC_APP_DISTRIBUTION"]
+          ],
+          "common_name": [
+            "type": "string",
+            "description": "Common name for the certificate (e.g., your name or company name). Defaults to current user."
+          ]
+        ] as [String: Any],
+        "required": ["certificate_type"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_revoke_certificate",
+      description: "Revoke (delete) a certificate by ID. Use asc_list_certificates to find the ID. WARNING: This invalidates any apps signed with this certificate.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "certificate_id": [
+            "type": "string",
+            "description": "Certificate ID from asc_list_certificates"
+          ]
+        ] as [String: Any],
+        "required": ["certificate_id"] as [String]
+      ]
+    ),
     // TestFlight tools
     Tool(
       name: "asc_list_testers",
@@ -1188,6 +1236,12 @@ public enum MCPTools {
         return try await ascDownloadProfile(arguments: arguments)
       case "asc_regenerate_profile":
         return try await ascRegenerateProfile(arguments: arguments)
+      case "asc_list_certificates":
+        return try await ascListCertificates(arguments: arguments)
+      case "asc_create_certificate":
+        return try await ascCreateCertificate(arguments: arguments)
+      case "asc_revoke_certificate":
+        return try await ascRevokeCertificate(arguments: arguments)
       case "asc_list_testers":
         return try await ascListTesters(arguments: arguments)
       case "asc_add_tester":
@@ -5264,6 +5318,304 @@ public enum MCPTools {
         newProfile: nil,
         downloadPath: nil,
         deviceCount: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - Certificate Tools
+
+  struct ASCCertificateInfo: Encodable {
+    let id: String
+    let name: String?
+    let displayName: String?
+    let certificateType: String
+    let expirationDate: String?
+    let serialNumber: String?
+  }
+
+  struct ASCListCertificatesResult: Encodable {
+    let success: Bool
+    let certificates: [ASCCertificateInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCCreateCertificateResult: Encodable {
+    let success: Bool
+    let certificate: ASCCertificateInfo?
+    let downloadPath: String?
+    let keychainInstalled: Bool?
+    let error: String?
+    let hint: String?
+  }
+
+  struct ASCRevokeCertificateResult: Encodable {
+    let success: Bool
+    let certificateId: String?
+    let error: String?
+  }
+
+  static func ascListCertificates(arguments: [String: Any]) async throws -> String {
+    let certificateType = arguments["certificate_type"] as? String
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListCertificatesResult(
+        success: false,
+        certificates: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let certs = try await AppStoreConnectClient.shared.listCertificates(certificateType: certificateType)
+
+      let certInfos = certs.map { cert in
+        ASCCertificateInfo(
+          id: cert.id,
+          name: cert.attributes.name,
+          displayName: cert.attributes.displayName,
+          certificateType: cert.attributes.certificateType,
+          expirationDate: cert.attributes.expirationDate,
+          serialNumber: cert.attributes.serialNumber
+        )
+      }
+
+      return encodeJSON(ASCListCertificatesResult(
+        success: true,
+        certificates: certInfos,
+        count: certInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListCertificatesResult(
+        success: false,
+        certificates: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListCertificatesResult(
+        success: false,
+        certificates: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascCreateCertificate(arguments: [String: Any]) async throws -> String {
+    guard let certificateType = arguments["certificate_type"] as? String else {
+      throw ToolError.missingArgument("certificate_type")
+    }
+    let commonName = arguments["common_name"] as? String ?? NSFullUserName()
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCCreateCertificateResult(
+        success: false,
+        certificate: nil,
+        downloadPath: nil,
+        keychainInstalled: nil,
+        error: "Not configured. Use asc_configure to set up credentials.",
+        hint: nil
+      ))
+    }
+
+    do {
+      // Step 1: Generate a new private key and CSR using security command
+      let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("xclaude-cert-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+      let csrPath = tempDir.appendingPathComponent("CertificateSigningRequest.certSigningRequest").path
+      let cerPath = tempDir.appendingPathComponent("certificate.cer").path
+
+      // Generate CSR using openssl (more reliable than security command for CSR generation)
+      let opensslKeyPath = tempDir.appendingPathComponent("private_key.pem").path
+
+      // Generate private key
+      let genKeyProcess = Process()
+      genKeyProcess.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+      genKeyProcess.arguments = ["genrsa", "-out", opensslKeyPath, "2048"]
+      try genKeyProcess.run()
+      genKeyProcess.waitUntilExit()
+
+      guard genKeyProcess.terminationStatus == 0 else {
+        throw ToolError.commandFailed("Failed to generate private key")
+      }
+
+      // Generate CSR
+      let genCsrProcess = Process()
+      genCsrProcess.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+      genCsrProcess.arguments = [
+        "req", "-new",
+        "-key", opensslKeyPath,
+        "-out", csrPath,
+        "-subj", "/CN=\(commonName)/C=US"
+      ]
+      try genCsrProcess.run()
+      genCsrProcess.waitUntilExit()
+
+      guard genCsrProcess.terminationStatus == 0 else {
+        throw ToolError.commandFailed("Failed to generate CSR")
+      }
+
+      // Read CSR content
+      let csrContent = try String(contentsOfFile: csrPath, encoding: .utf8)
+
+      // Step 2: Submit CSR to Apple
+      let cert = try await AppStoreConnectClient.shared.createCertificate(
+        csrContent: csrContent,
+        certificateType: certificateType
+      )
+
+      // Step 3: Download certificate
+      try await AppStoreConnectClient.shared.downloadCertificate(id: cert.id, to: cerPath)
+
+      // Step 4: Import private key and certificate to keychain
+      // Convert private key to PKCS12 format for import
+      let p12Path = tempDir.appendingPathComponent("cert_with_key.p12").path
+
+      // First we need to combine key and cert into p12
+      // We need the cert in PEM format first
+      let pemCertPath = tempDir.appendingPathComponent("certificate.pem").path
+      let convertCertProcess = Process()
+      convertCertProcess.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+      convertCertProcess.arguments = ["x509", "-inform", "DER", "-in", cerPath, "-out", pemCertPath]
+      try convertCertProcess.run()
+      convertCertProcess.waitUntilExit()
+
+      // Create PKCS12 bundle
+      let createP12Process = Process()
+      createP12Process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+      createP12Process.arguments = [
+        "pkcs12", "-export",
+        "-inkey", opensslKeyPath,
+        "-in", pemCertPath,
+        "-out", p12Path,
+        "-passout", "pass:"
+      ]
+      try createP12Process.run()
+      createP12Process.waitUntilExit()
+
+      // Import to keychain
+      var keychainInstalled = false
+      if createP12Process.terminationStatus == 0 {
+        let importProcess = Process()
+        importProcess.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        importProcess.arguments = [
+          "import", p12Path,
+          "-k", "login.keychain-db",
+          "-P", "",
+          "-T", "/usr/bin/codesign",
+          "-T", "/usr/bin/security"
+        ]
+        try importProcess.run()
+        importProcess.waitUntilExit()
+        keychainInstalled = importProcess.terminationStatus == 0
+      }
+
+      // Clean up temp files (keep .cer for reference)
+      let finalCerPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Downloads/\(cert.attributes.name ?? certificateType)_\(cert.id.prefix(8)).cer").path
+      try? FileManager.default.copyItem(atPath: cerPath, toPath: finalCerPath)
+      try? FileManager.default.removeItem(at: tempDir)
+
+      let certInfo = ASCCertificateInfo(
+        id: cert.id,
+        name: cert.attributes.name,
+        displayName: cert.attributes.displayName,
+        certificateType: cert.attributes.certificateType,
+        expirationDate: cert.attributes.expirationDate,
+        serialNumber: cert.attributes.serialNumber
+      )
+
+      var hint: String? = nil
+      if !keychainInstalled {
+        hint = "Certificate was created but may not have been imported to keychain. Double-click the .cer file at \(finalCerPath) to install manually."
+      }
+
+      return encodeJSON(ASCCreateCertificateResult(
+        success: true,
+        certificate: certInfo,
+        downloadPath: finalCerPath,
+        keychainInstalled: keychainInstalled,
+        error: nil,
+        hint: hint
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCCreateCertificateResult(
+        success: false,
+        certificate: nil,
+        downloadPath: nil,
+        keychainInstalled: nil,
+        error: error.errorDescription,
+        hint: nil
+      ))
+    } catch {
+      return encodeJSON(ASCCreateCertificateResult(
+        success: false,
+        certificate: nil,
+        downloadPath: nil,
+        keychainInstalled: nil,
+        error: error.localizedDescription,
+        hint: nil
+      ))
+    }
+  }
+
+  static func ascRevokeCertificate(arguments: [String: Any]) async throws -> String {
+    guard let certificateId = arguments["certificate_id"] as? String else {
+      throw ToolError.missingArgument("certificate_id")
+    }
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCRevokeCertificateResult(
+        success: false,
+        certificateId: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      try await AppStoreConnectClient.shared.revokeCertificate(id: certificateId)
+
+      return encodeJSON(ASCRevokeCertificateResult(
+        success: true,
+        certificateId: certificateId,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCRevokeCertificateResult(
+        success: false,
+        certificateId: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCRevokeCertificateResult(
+        success: false,
+        certificateId: nil,
         error: error.localizedDescription
       ))
     }
