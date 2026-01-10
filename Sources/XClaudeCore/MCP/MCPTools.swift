@@ -994,6 +994,107 @@ public enum MCPTools {
         "required": [] as [String]
       ]
     ),
+    Tool(
+      name: "asc_list_bundle_ids",
+      description: "List all registered bundle identifiers in App Store Connect.",
+      inputSchema: [
+        "type": "object",
+        "properties": [:] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_create_bundle_id",
+      description: "Register a new bundle identifier in App Store Connect. Required before creating an app.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "identifier": [
+            "type": "string",
+            "description": "Bundle identifier (e.g., 'com.example.myapp')"
+          ],
+          "name": [
+            "type": "string",
+            "description": "Display name for this bundle ID"
+          ],
+          "platform": [
+            "type": "string",
+            "description": "Platform: IOS, MAC_OS (default: IOS)"
+          ]
+        ] as [String: Any],
+        "required": ["identifier", "name"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_create_app",
+      description: "Create a new app in App Store Connect. Requires bundle ID to be registered first.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "bundle_id": [
+            "type": "string",
+            "description": "Bundle identifier (must already be registered)"
+          ],
+          "name": [
+            "type": "string",
+            "description": "App name as it will appear on the App Store"
+          ],
+          "sku": [
+            "type": "string",
+            "description": "Unique app identifier for your records (e.g., 'my-app-v1')"
+          ],
+          "primary_locale": [
+            "type": "string",
+            "description": "Primary locale (default: en-US)"
+          ]
+        ] as [String: Any],
+        "required": ["bundle_id", "name", "sku"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_create_group",
+      description: "Create a new TestFlight beta group for distributing builds to testers.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "app_id": [
+            "type": "string",
+            "description": "App ID to create group for"
+          ],
+          "name": [
+            "type": "string",
+            "description": "Group name (e.g., 'Family Testers', 'External Beta')"
+          ],
+          "is_internal": [
+            "type": "boolean",
+            "description": "Internal group (App Store Connect users) vs external (default: false)"
+          ],
+          "public_link_enabled": [
+            "type": "boolean",
+            "description": "Enable public link for joining (default: false)"
+          ]
+        ] as [String: Any],
+        "required": ["app_id", "name"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_add_build_to_group",
+      description: "Add a build to a beta group for distribution to testers.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "group_id": [
+            "type": "string",
+            "description": "Beta group ID"
+          ],
+          "build_id": [
+            "type": "string",
+            "description": "Build ID to add to the group"
+          ]
+        ] as [String: Any],
+        "required": ["group_id", "build_id"] as [String]
+      ]
+    ),
   ]
 
   /// Call a tool by name
@@ -1101,6 +1202,16 @@ public enum MCPTools {
         return try await ascSetWhatsNew(arguments: arguments)
       case "asc_list_apps":
         return try await ascListApps()
+      case "asc_list_bundle_ids":
+        return try await ascListBundleIds()
+      case "asc_create_bundle_id":
+        return try await ascCreateBundleId(arguments: arguments)
+      case "asc_create_app":
+        return try await ascCreateApp(arguments: arguments)
+      case "asc_create_group":
+        return try await ascCreateGroup(arguments: arguments)
+      case "asc_add_build_to_group":
+        return try await ascAddBuildToGroup(arguments: arguments)
       default:
         throw MCPError.unknownTool(name)
     }
@@ -5578,6 +5689,333 @@ public enum MCPTools {
         success: false,
         apps: nil,
         count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC List Bundle IDs
+
+  struct ASCListBundleIdsResult: Encodable {
+    let success: Bool
+    let bundleIds: [ASCBundleIdInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCBundleIdInfo: Encodable {
+    let id: String
+    let identifier: String
+    let name: String
+    let platform: String?
+  }
+
+  static func ascListBundleIds() async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListBundleIdsResult(
+        success: false,
+        bundleIds: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let bundleIds = try await AppStoreConnectClient.shared.listBundleIds()
+      let infos = bundleIds.map { bid in
+        ASCBundleIdInfo(
+          id: bid.id,
+          identifier: bid.attributes.identifier,
+          name: bid.attributes.name,
+          platform: bid.attributes.platform
+        )
+      }
+      return encodeJSON(ASCListBundleIdsResult(
+        success: true,
+        bundleIds: infos,
+        count: infos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListBundleIdsResult(
+        success: false,
+        bundleIds: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListBundleIdsResult(
+        success: false,
+        bundleIds: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Create Bundle ID
+
+  struct ASCCreateBundleIdResult: Encodable {
+    let success: Bool
+    let bundleId: ASCBundleIdInfo?
+    let error: String?
+  }
+
+  static func ascCreateBundleId(arguments: [String: Any]) async throws -> String {
+    guard let identifier = arguments["identifier"] as? String else {
+      throw ToolError.missingArgument("identifier")
+    }
+    guard let name = arguments["name"] as? String else {
+      throw ToolError.missingArgument("name")
+    }
+    let platform = arguments["platform"] as? String ?? "IOS"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCCreateBundleIdResult(
+        success: false,
+        bundleId: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let result = try await AppStoreConnectClient.shared.createBundleId(
+        identifier: identifier,
+        name: name,
+        platform: platform
+      )
+      return encodeJSON(ASCCreateBundleIdResult(
+        success: true,
+        bundleId: ASCBundleIdInfo(
+          id: result.id,
+          identifier: result.attributes.identifier,
+          name: result.attributes.name,
+          platform: result.attributes.platform
+        ),
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCCreateBundleIdResult(
+        success: false,
+        bundleId: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCCreateBundleIdResult(
+        success: false,
+        bundleId: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Create App
+
+  struct ASCCreateAppResult: Encodable {
+    let success: Bool
+    let app: ASCAppInfo?
+    let error: String?
+  }
+
+  static func ascCreateApp(arguments: [String: Any]) async throws -> String {
+    guard let bundleIdIdentifier = arguments["bundle_id"] as? String else {
+      throw ToolError.missingArgument("bundle_id")
+    }
+    guard let name = arguments["name"] as? String else {
+      throw ToolError.missingArgument("name")
+    }
+    guard let sku = arguments["sku"] as? String else {
+      throw ToolError.missingArgument("sku")
+    }
+    let primaryLocale = arguments["primary_locale"] as? String ?? "en-US"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCCreateAppResult(
+        success: false,
+        app: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // First find the bundle ID record
+      guard let bundleIdRecord = try await AppStoreConnectClient.shared.findBundleId(identifier: bundleIdIdentifier) else {
+        return encodeJSON(ASCCreateAppResult(
+          success: false,
+          app: nil,
+          error: "Bundle ID '\(bundleIdIdentifier)' not found. Register it first with asc_create_bundle_id."
+        ))
+      }
+
+      let app = try await AppStoreConnectClient.shared.createApp(
+        bundleIdId: bundleIdRecord.id,
+        name: name,
+        sku: sku,
+        primaryLocale: primaryLocale
+      )
+      return encodeJSON(ASCCreateAppResult(
+        success: true,
+        app: ASCAppInfo(
+          id: app.id,
+          name: app.attributes.name,
+          bundleId: app.attributes.bundleId
+        ),
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCCreateAppResult(
+        success: false,
+        app: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCCreateAppResult(
+        success: false,
+        app: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Create Group
+
+  struct ASCCreateGroupResult: Encodable {
+    let success: Bool
+    let group: ASCGroupInfo?
+    let error: String?
+  }
+
+  static func ascCreateGroup(arguments: [String: Any]) async throws -> String {
+    guard let appId = arguments["app_id"] as? String else {
+      throw ToolError.missingArgument("app_id")
+    }
+    guard let name = arguments["name"] as? String else {
+      throw ToolError.missingArgument("name")
+    }
+    let isInternal = arguments["is_internal"] as? Bool ?? false
+    let publicLinkEnabled = arguments["public_link_enabled"] as? Bool ?? false
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCCreateGroupResult(
+        success: false,
+        group: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      let group = try await AppStoreConnectClient.shared.createBetaGroup(
+        appId: appId,
+        name: name,
+        isInternal: isInternal,
+        publicLinkEnabled: publicLinkEnabled
+      )
+      return encodeJSON(ASCCreateGroupResult(
+        success: true,
+        group: ASCGroupInfo(
+          id: group.id,
+          name: group.attributes.name,
+          isInternal: group.attributes.isInternalGroup ?? false,
+          publicLinkEnabled: group.attributes.publicLinkEnabled
+        ),
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCCreateGroupResult(
+        success: false,
+        group: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCCreateGroupResult(
+        success: false,
+        group: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Add Build to Group
+
+  struct ASCAddBuildToGroupResult: Encodable {
+    let success: Bool
+    let groupId: String?
+    let buildId: String?
+    let error: String?
+  }
+
+  static func ascAddBuildToGroup(arguments: [String: Any]) async throws -> String {
+    guard let groupId = arguments["group_id"] as? String else {
+      throw ToolError.missingArgument("group_id")
+    }
+    guard let buildId = arguments["build_id"] as? String else {
+      throw ToolError.missingArgument("build_id")
+    }
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCAddBuildToGroupResult(
+        success: false,
+        groupId: nil,
+        buildId: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      try await AppStoreConnectClient.shared.addBuildToGroup(groupId: groupId, buildId: buildId)
+      return encodeJSON(ASCAddBuildToGroupResult(
+        success: true,
+        groupId: groupId,
+        buildId: buildId,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCAddBuildToGroupResult(
+        success: false,
+        groupId: nil,
+        buildId: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCAddBuildToGroupResult(
+        success: false,
+        groupId: nil,
+        buildId: nil,
         error: error.localizedDescription
       ))
     }

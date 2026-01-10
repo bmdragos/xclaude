@@ -410,6 +410,30 @@ public actor AppStoreConnectClient {
     return response.data.first
   }
 
+  /// Create a new bundle ID
+  public func createBundleId(identifier: String, name: String, platform: String = "IOS") async throws -> BundleIdListResponse.BundleIdData {
+    let request = BundleIdCreateRequest(identifier: identifier, name: name, platform: platform)
+    let response: BundleIdResponse = try await post("bundleIds", body: request)
+    return response.data
+  }
+
+  // MARK: - App Management
+
+  /// List all apps
+  public func listApps() async throws -> [AppData] {
+    let response: AppDataListResponse = try await get("apps", queryItems: [
+      URLQueryItem(name: "limit", value: "200")
+    ])
+    return response.data
+  }
+
+  /// Create a new app
+  public func createApp(bundleIdId: String, name: String, sku: String, primaryLocale: String = "en-US") async throws -> AppData {
+    let request = AppCreateRequest(bundleIdId: bundleIdId, name: name, sku: sku, primaryLocale: primaryLocale)
+    let response: AppDataResponse = try await post("apps", body: request)
+    return response.data
+  }
+
   // MARK: - Certificate Management
 
   /// List all certificates
@@ -507,6 +531,39 @@ public actor AppStoreConnectClient {
     let request = BetaGroupTesterAddRequest(testerIds: testerIds)
     // This is a relationship endpoint, needs special handling
     var urlRequest = URLRequest(url: baseURL.appendingPathComponent("betaGroups/\(groupId)/relationships/betaTesters"))
+    urlRequest.httpMethod = "POST"
+    let token = try getToken()
+    urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    urlRequest.httpBody = try JSONEncoder().encode(request)
+
+    let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw ASCError.requestFailed(0, "Invalid response type")
+    }
+
+    if httpResponse.statusCode >= 400 {
+      if let errorResponse = try? JSONDecoder().decode(ASCErrorResponse.self, from: data),
+         let firstError = errorResponse.errors.first {
+        throw ASCError.apiError(firstError.code, firstError.detail)
+      }
+      throw ASCError.requestFailed(httpResponse.statusCode, String(data: data, encoding: .utf8) ?? "Unknown error")
+    }
+  }
+
+  /// Create a new beta group
+  public func createBetaGroup(appId: String, name: String, isInternal: Bool = false, publicLinkEnabled: Bool = false) async throws -> BetaGroupData {
+    let request = BetaGroupCreateRequest(appId: appId, name: name, isInternalGroup: isInternal, publicLinkEnabled: publicLinkEnabled)
+    let response: BetaGroupResponse = try await post("betaGroups", body: request)
+    return response.data
+  }
+
+  /// Add a build to a beta group for distribution
+  public func addBuildToGroup(groupId: String, buildId: String) async throws {
+    let request = BetaGroupBuildAddRequest(buildIds: [buildId])
+    // This is a relationship endpoint
+    var urlRequest = URLRequest(url: baseURL.appendingPathComponent("betaGroups/\(groupId)/relationships/builds"))
     urlRequest.httpMethod = "POST"
     let token = try getToken()
     urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -1052,5 +1109,169 @@ struct BetaBuildLocalizationUpdateRequest: Encodable {
       id: id,
       attributes: BetaBuildLocalizationUpdateAttributes(whatsNew: whatsNew)
     )
+  }
+}
+
+// MARK: - Bundle ID Create Types
+
+struct BundleIdResponse: Decodable {
+  let data: BundleIdListResponse.BundleIdData
+}
+
+struct BundleIdCreateRequest: Encodable {
+  let data: BundleIdCreateData
+
+  struct BundleIdCreateData: Encodable {
+    let type: String
+    let attributes: BundleIdCreateAttributes
+  }
+
+  struct BundleIdCreateAttributes: Encodable {
+    let identifier: String
+    let name: String
+    let platform: String
+  }
+
+  init(identifier: String, name: String, platform: String) {
+    self.data = BundleIdCreateData(
+      type: "bundleIds",
+      attributes: BundleIdCreateAttributes(
+        identifier: identifier,
+        name: name,
+        platform: platform
+      )
+    )
+  }
+}
+
+// MARK: - App Types
+
+public struct AppDataListResponse: Decodable {
+  public let data: [AppData]
+}
+
+public struct AppDataResponse: Decodable {
+  public let data: AppData
+}
+
+public struct AppData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: AppDataAttributes
+}
+
+public struct AppDataAttributes: Decodable {
+  public let name: String
+  public let bundleId: String
+  public let sku: String?
+  public let primaryLocale: String?
+}
+
+struct AppCreateRequest: Encodable {
+  let data: AppCreateData
+
+  struct AppCreateData: Encodable {
+    let type: String
+    let attributes: AppCreateAttributes
+    let relationships: AppRelationships
+  }
+
+  struct AppCreateAttributes: Encodable {
+    let name: String
+    let primaryLocale: String
+    let sku: String
+  }
+
+  struct AppRelationships: Encodable {
+    let bundleId: BundleIdRelationship
+  }
+
+  struct BundleIdRelationship: Encodable {
+    let data: BundleIdRelData
+  }
+
+  struct BundleIdRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(bundleIdId: String, name: String, sku: String, primaryLocale: String) {
+    self.data = AppCreateData(
+      type: "apps",
+      attributes: AppCreateAttributes(
+        name: name,
+        primaryLocale: primaryLocale,
+        sku: sku
+      ),
+      relationships: AppRelationships(
+        bundleId: BundleIdRelationship(
+          data: BundleIdRelData(type: "bundleIds", id: bundleIdId)
+        )
+      )
+    )
+  }
+}
+
+// MARK: - Beta Group Create Types
+
+struct BetaGroupResponse: Decodable {
+  let data: BetaGroupData
+}
+
+struct BetaGroupCreateRequest: Encodable {
+  let data: BetaGroupCreateData
+
+  struct BetaGroupCreateData: Encodable {
+    let type: String
+    let attributes: BetaGroupCreateAttributes
+    let relationships: BetaGroupRelationships
+  }
+
+  struct BetaGroupCreateAttributes: Encodable {
+    let name: String
+    let isInternalGroup: Bool
+    let publicLinkEnabled: Bool
+  }
+
+  struct BetaGroupRelationships: Encodable {
+    let app: AppRelationship
+  }
+
+  struct AppRelationship: Encodable {
+    let data: AppRelData
+  }
+
+  struct AppRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(appId: String, name: String, isInternalGroup: Bool, publicLinkEnabled: Bool) {
+    self.data = BetaGroupCreateData(
+      type: "betaGroups",
+      attributes: BetaGroupCreateAttributes(
+        name: name,
+        isInternalGroup: isInternalGroup,
+        publicLinkEnabled: publicLinkEnabled
+      ),
+      relationships: BetaGroupRelationships(
+        app: AppRelationship(
+          data: AppRelData(type: "apps", id: appId)
+        )
+      )
+    )
+  }
+}
+
+struct BetaGroupBuildAddRequest: Encodable {
+  let data: [BuildRelData]
+
+  struct BuildRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(buildIds: [String]) {
+    self.data = buildIds.map { BuildRelData(type: "builds", id: $0) }
   }
 }
