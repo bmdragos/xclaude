@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "3.7.0"
+  public static let version = "3.8.0"
 
   /// Tool definition
   struct Tool {
@@ -94,7 +94,7 @@ public enum MCPTools {
           "platform": [
             "type": "string",
             "description": "Target platform (iOS, iOSSimulator, macOS, etc.)",
-            "default": "iOSSimulator"
+            "default": "iOS"
           ],
           "configuration": [
             "type": "string",
@@ -104,6 +104,11 @@ public enum MCPTools {
           "path": [
             "type": "string",
             "description": "Path to the project directory"
+          ],
+          "clean": [
+            "type": "boolean",
+            "description": "Delete .build/ directory before building (clean build)",
+            "default": false
           ]
         ] as [String: Any],
         "required": [] as [String]
@@ -135,7 +140,12 @@ public enum MCPTools {
           ],
           "lines": [
             "type": "integer",
-            "description": "Number of recent lines to return (default: all buffered, clears buffer)"
+            "description": "Number of recent lines to return (default: all buffered)"
+          ],
+          "clear": [
+            "type": "boolean",
+            "description": "Clear buffer after reading (default: false)",
+            "default": false
           ]
         ] as [String: Any],
         "required": ["job_id"] as [String]
@@ -164,7 +174,7 @@ public enum MCPTools {
           "target": [
             "type": "string",
             "description": "Target: 'macOS' (install to /Applications), 'device' (iOS physical), 'simulator' (iOS Simulator), or UDID/name",
-            "default": "simulator"
+            "default": "device"
           ],
           "app_path": [
             "type": "string",
@@ -172,7 +182,7 @@ public enum MCPTools {
           ],
           "bundle_id": [
             "type": "string",
-            "description": "App bundle identifier (for launching)"
+            "description": "App bundle identifier (for launching). Auto-detected from xclaude.toml if not provided."
           ],
           "launch": [
             "type": "boolean",
@@ -180,7 +190,7 @@ public enum MCPTools {
             "default": true
           ]
         ] as [String: Any],
-        "required": ["app_path", "bundle_id"] as [String]
+        "required": ["app_path"] as [String]
       ]
     ),
     Tool(
@@ -1051,9 +1061,10 @@ public enum MCPTools {
   }
 
   static func buildStart(arguments: [String: Any]) async throws -> String {
-    let platformStr = arguments["platform"] as? String ?? "iOSSimulator"
+    let platformStr = arguments["platform"] as? String ?? "iOS"
     let configStr = arguments["configuration"] as? String ?? "debug"
     let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
+    let clean = arguments["clean"] as? Bool ?? false
 
     guard let platform = BuildRunner.Platform(rawValue: platformStr) else {
       return encodeJSON(BuildStartResult(
@@ -1065,6 +1076,12 @@ public enum MCPTools {
     }
 
     let projectURL = URL(fileURLWithPath: pathStr)
+
+    // Clean build directory if requested
+    if clean {
+      let buildDir = projectURL.appendingPathComponent(".build")
+      try? FileManager.default.removeItem(at: buildDir)
+    }
 
     // Detect project type and prepare config
     let projectType = ConfigTranslator.detectProjectType(at: projectURL)
@@ -1197,7 +1214,8 @@ public enum MCPTools {
     }
 
     let lines = arguments["lines"] as? Int
-    let output = job.readOutput(count: lines)
+    let clear = arguments["clear"] as? Bool ?? false
+    let output = job.readOutput(count: lines, clear: clear)
 
     return encodeJSON(BuildLogsResult(
       jobId: jobId,
@@ -1250,11 +1268,36 @@ public enum MCPTools {
     guard let appPath = arguments["app_path"] as? String else {
       throw ToolError.missingArgument("app_path")
     }
-    guard let bundleId = arguments["bundle_id"] as? String else {
-      throw ToolError.missingArgument("bundle_id")
+
+    // Auto-detect bundle_id from xclaude.toml if not provided
+    let bundleId: String
+    if let providedBundleId = arguments["bundle_id"] as? String {
+      bundleId = providedBundleId
+    } else {
+      // Try to find xclaude.toml - first check cwd, then walk up from app_path
+      let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+      if let config = try? XClaudeConfig.load(from: cwd) {
+        bundleId = config.app.bundleId
+      } else {
+        // Walk up from app_path to find xclaude.toml (app is typically in .build/bundler/)
+        var searchDir = URL(fileURLWithPath: appPath).deletingLastPathComponent()
+        var foundConfig: XClaudeConfig? = nil
+        for _ in 0..<5 {  // Max 5 levels up
+          if let config = try? XClaudeConfig.load(from: searchDir) {
+            foundConfig = config
+            break
+          }
+          searchDir = searchDir.deletingLastPathComponent()
+        }
+        if let config = foundConfig {
+          bundleId = config.app.bundleId
+        } else {
+          throw ToolError.missingArgument("bundle_id (could not auto-detect - no xclaude.toml found)")
+        }
+      }
     }
 
-    let targetStr = arguments["target"] as? String ?? "simulator"
+    let targetStr = arguments["target"] as? String ?? "device"
     let launch = arguments["launch"] as? Bool ?? true
     let target = DeployRunner.Target.parse(targetStr)
 

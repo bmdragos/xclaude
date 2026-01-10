@@ -38,7 +38,7 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Status: v3.7.0 Released
+## Status: v3.8.0 Released
 
 - [x] Fork Swift Bundler
 - [x] Fix iOS app icons
@@ -90,7 +90,9 @@ Sources/XClaudeCore/
 ### Build Modes
 - **Async only** (`build_start/status/logs/cancel`): `BuildManager` returns job ID immediately
 - `build_status` returns `appPath` so you know where the built `.app` is located
-- Sync `build` tool was removed in v3.6.0 - async is better for Claude's workflow
+- `build_start` defaults: platform=`iOS`, config=`debug`. Use `clean: true` to delete `.build/` first.
+- `build_logs` preserves buffer by default. Use `clear: true` to clear after reading.
+- `deploy` defaults to `device` target. `bundle_id` auto-detects from xclaude.toml if omitted.
 
 ### Post-Build Processing
 After successful builds, xclaude automatically:

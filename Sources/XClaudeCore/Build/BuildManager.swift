@@ -132,18 +132,25 @@ public final class BuildJob: @unchecked Sendable {
   }
 
   /// Read buffered output lines (non-blocking)
-  /// - Parameter count: Number of recent lines to return (nil = all, clears buffer)
-  public func readOutput(count: Int? = nil) -> [String] {
+  /// - Parameters:
+  ///   - count: Number of recent lines to return (nil = all)
+  ///   - clear: Whether to clear the buffer after reading (default: false)
+  public func readOutput(count: Int? = nil, clear: Bool = false) -> [String] {
     lock.lock()
     defer { lock.unlock() }
 
+    let lines: [String]
     if let count = count {
-      return Array(_outputBuffer.suffix(count))
+      lines = Array(_outputBuffer.suffix(count))
     } else {
-      let lines = _outputBuffer
-      _outputBuffer = []
-      return lines
+      lines = _outputBuffer
     }
+
+    if clear {
+      _outputBuffer = []
+    }
+
+    return lines
   }
 
   /// Cancel the build

@@ -138,12 +138,16 @@ Most projects only need the app name. Everything else is auto-discovered.
 For long-running builds, use the async pattern:
 
 ```
-build_start(platform: "iOS")     → { job_id: "build-1" }
-build_status(job_id: "build-1")  → { status: "running", duration: 45.2, appPath: ".build/bundler/MyApp.app" }
+build_start()                    → { job_id: "build-1" }  # defaults to iOS device
+build_status(job_id: "build-1")  → { status: "running", appPath: ".build/bundler/MyApp.app" }
 build_logs(job_id: "build-1")    → { lines: [...], status: "success" }
+deploy(app_path: "...")          → { success: true }  # bundle_id auto-detected
 ```
 
-This returns immediately and lets you poll for progress. `appPath` tells you where to find the built `.app` for deployment.
+Options:
+- `build_start(clean: true)` - delete `.build/` before building
+- `build_logs(clear: true)` - clear buffer after reading (default: preserves buffer)
+- `deploy` auto-detects `bundle_id` from xclaude.toml, defaults to device target
 
 ### Example Workflows
 
