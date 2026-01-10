@@ -86,13 +86,27 @@ public struct XClaudeConfig: Codable {
       launchStoryboard: launchStoryboard
     )
 
-    // Parse [signing] section (optional)
+    // Parse [signing] section (optional) with platform-specific overrides
     var signing: SigningConfig? = nil
     if let signingTable = table["signing"]?.table {
+      // Helper to parse platform-specific signing
+      func parsePlatformSigning(_ key: String) -> PlatformSigningConfig? {
+        guard let platformTable = signingTable[key]?.table else { return nil }
+        return PlatformSigningConfig(
+          team: platformTable["team"]?.string,
+          identity: platformTable["identity"]?.string,
+          profile: platformTable["profile"]?.string
+        )
+      }
+
       signing = SigningConfig(
         team: signingTable["team"]?.string,
         identity: signingTable["identity"]?.string,
-        profile: signingTable["profile"]?.string
+        profile: signingTable["profile"]?.string,
+        iOS: parsePlatformSigning("iOS"),
+        macOS: parsePlatformSigning("macOS"),
+        visionOS: parsePlatformSigning("visionOS"),
+        tvOS: parsePlatformSigning("tvOS")
       )
     }
 
@@ -195,18 +209,44 @@ public struct XClaudeConfig: Codable {
       lines.append("launch_storyboard = \"\(launchStoryboard)\"")
     }
 
-    if let signing = signing,
-       (signing.team != nil || signing.identity != nil || signing.profile != nil) {
-      lines.append("")
-      lines.append("[signing]")
-      if let team = signing.team {
-        lines.append("team = \"\(team)\"")
-      }
-      if let identity = signing.identity {
-        lines.append("identity = \"\(identity)\"")
-      }
-      if let profile = signing.profile {
-        lines.append("profile = \"\(profile)\"")
+    if let signing = signing {
+      let hasGenericSigning = signing.team != nil || signing.identity != nil || signing.profile != nil
+      let hasPlatformSigning = signing.iOS != nil || signing.macOS != nil || signing.visionOS != nil || signing.tvOS != nil
+
+      if hasGenericSigning || hasPlatformSigning {
+        lines.append("")
+        lines.append("[signing]")
+        if let team = signing.team {
+          lines.append("team = \"\(team)\"")
+        }
+        if let identity = signing.identity {
+          lines.append("identity = \"\(identity)\"")
+        }
+        if let profile = signing.profile {
+          lines.append("profile = \"\(profile)\"")
+        }
+
+        // Helper to output platform-specific signing
+        func outputPlatformSigning(_ name: String, _ config: PlatformSigningConfig?) {
+          guard let config = config,
+                (config.team != nil || config.identity != nil || config.profile != nil) else { return }
+          lines.append("")
+          lines.append("[signing.\(name)]")
+          if let team = config.team {
+            lines.append("team = \"\(team)\"")
+          }
+          if let identity = config.identity {
+            lines.append("identity = \"\(identity)\"")
+          }
+          if let profile = config.profile {
+            lines.append("profile = \"\(profile)\"")
+          }
+        }
+
+        outputPlatformSigning("iOS", signing.iOS)
+        outputPlatformSigning("macOS", signing.macOS)
+        outputPlatformSigning("visionOS", signing.visionOS)
+        outputPlatformSigning("tvOS", signing.tvOS)
       }
     }
 
@@ -372,6 +412,63 @@ public struct AppConfig: Codable {
 
 /// Signing configuration (all optional - discovered if missing)
 public struct SigningConfig: Codable {
+  public var team: String?
+  public var identity: String?
+  public var profile: String?
+
+  // Platform-specific overrides
+  public var iOS: PlatformSigningConfig?
+  public var macOS: PlatformSigningConfig?
+  public var visionOS: PlatformSigningConfig?
+  public var tvOS: PlatformSigningConfig?
+
+  public init(
+    team: String? = nil,
+    identity: String? = nil,
+    profile: String? = nil,
+    iOS: PlatformSigningConfig? = nil,
+    macOS: PlatformSigningConfig? = nil,
+    visionOS: PlatformSigningConfig? = nil,
+    tvOS: PlatformSigningConfig? = nil
+  ) {
+    self.team = team
+    self.identity = identity
+    self.profile = profile
+    self.iOS = iOS
+    self.macOS = macOS
+    self.visionOS = visionOS
+    self.tvOS = tvOS
+  }
+
+  /// Get signing config for a specific platform (platform-specific takes precedence)
+  public func forPlatform(_ platform: String) -> (team: String?, identity: String?, profile: String?) {
+    let platformLower = platform.lowercased()
+
+    // Check for platform-specific config
+    let platformConfig: PlatformSigningConfig?
+    if platformLower.contains("ios") || platformLower.contains("iphone") || platformLower.contains("ipad") {
+      platformConfig = iOS
+    } else if platformLower.contains("macos") || platformLower.contains("mac") {
+      platformConfig = macOS
+    } else if platformLower.contains("visionos") || platformLower.contains("vision") {
+      platformConfig = visionOS
+    } else if platformLower.contains("tvos") || platformLower.contains("tv") {
+      platformConfig = tvOS
+    } else {
+      platformConfig = nil
+    }
+
+    // Platform-specific values take precedence over generic
+    return (
+      team: platformConfig?.team ?? team,
+      identity: platformConfig?.identity ?? identity,
+      profile: platformConfig?.profile ?? profile
+    )
+  }
+}
+
+/// Platform-specific signing overrides
+public struct PlatformSigningConfig: Codable {
   public var team: String?
   public var identity: String?
   public var profile: String?

@@ -377,9 +377,12 @@ extension SigningDiscovery {
   ) async throws -> ResolvedSigning {
     let signingData = try await discoverAll()
 
+    // Get platform-specific signing config (falls back to generic if not set)
+    let platformSigning = config?.signing?.forPlatform(platform)
+
     // Find matching profile (use configured or discover)
     let profile: ProvisioningProfile
-    if let configuredPath = config?.signing?.profile {
+    if let configuredPath = platformSigning?.profile {
       // Use configured profile path
       if let match = signingData.profiles.first(where: { $0.path.contains(configuredPath) || $0.name == configuredPath }) {
         profile = match
@@ -392,7 +395,7 @@ extension SigningDiscovery {
 
     // Find matching identity (use configured or discover)
     let identity: SigningIdentity
-    if let configuredIdentity = config?.signing?.identity {
+    if let configuredIdentity = platformSigning?.identity {
       if let match = signingData.identities.first(where: { $0.name.contains(configuredIdentity) || $0.id == configuredIdentity }) {
         identity = match
       } else {

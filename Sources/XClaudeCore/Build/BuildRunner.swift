@@ -241,9 +241,10 @@ public struct BuildRunner {
         .appendingPathComponent("Entitlements.plist")
       if FileManager.default.fileExists(atPath: entitlementsPath.path) {
         // macOS requires codesigning to embed entitlements
-        // Use identity from config, or default to "Apple Development"
+        // Use identity from config (platform-specific or generic), or default to "Apple Development"
         let config = try? XClaudeConfig.load(from: projectDirectory)
-        let identity = config?.signing?.identity ?? "Apple Development"
+        let platformSigning = config?.signing?.forPlatform("macOS")
+        let identity = platformSigning?.identity ?? "Apple Development"
 
         arguments.append("--codesign")
         arguments.append("--identity")
