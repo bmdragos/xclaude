@@ -4022,7 +4022,11 @@ public enum MCPTools {
 
     let output = stdout + stderr
 
-    if exitCode == 0 {
+    // Check for success: exit code 0 AND no ERROR in output
+    // altool can print ERROR: while still returning exit code 0
+    let hasError = output.contains("ERROR:") || output.contains("error:")
+
+    if exitCode == 0 && !hasError {
       // Try to parse upload ID from response
       var uploadId: String?
       if let data = stdout.data(using: .utf8),
