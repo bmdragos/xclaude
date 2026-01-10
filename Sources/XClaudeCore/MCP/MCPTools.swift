@@ -781,6 +781,96 @@ public enum MCPTools {
         "required": ["name", "udid"] as [String]
       ]
     ),
+    Tool(
+      name: "asc_list_profiles",
+      description: "List provisioning profiles in App Store Connect. Shows profile name, type, state, and expiration.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "profile_type": [
+            "type": "string",
+            "description": "Filter by type: IOS_APP_DEVELOPMENT, IOS_APP_ADHOC, IOS_APP_STORE, MAC_APP_DEVELOPMENT, MAC_APP_STORE, MAC_APP_DIRECT"
+          ],
+          "bundle_id": [
+            "type": "string",
+            "description": "Filter by bundle identifier (e.g., 'com.example.myapp')"
+          ]
+        ] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_create_profile",
+      description: "Create a new provisioning profile. For development profiles, includes all registered devices. Use this to regenerate a profile with new devices.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "name": [
+            "type": "string",
+            "description": "Profile name (e.g., 'MyApp Development')"
+          ],
+          "bundle_id": [
+            "type": "string",
+            "description": "Bundle identifier (e.g., 'com.example.myapp')"
+          ],
+          "profile_type": [
+            "type": "string",
+            "description": "Profile type: IOS_APP_DEVELOPMENT, IOS_APP_ADHOC, IOS_APP_STORE. Defaults to IOS_APP_DEVELOPMENT"
+          ]
+        ] as [String: Any],
+        "required": ["name", "bundle_id"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_delete_profile",
+      description: "Delete a provisioning profile by ID. Use asc_list_profiles to find the ID.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "profile_id": [
+            "type": "string",
+            "description": "Profile ID from asc_list_profiles"
+          ]
+        ] as [String: Any],
+        "required": ["profile_id"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_download_profile",
+      description: "Download a provisioning profile to a file. Automatically installs to ~/Library/MobileDevice/Provisioning Profiles/ if no path specified.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "profile_id": [
+            "type": "string",
+            "description": "Profile ID from asc_list_profiles"
+          ],
+          "output_path": [
+            "type": "string",
+            "description": "Optional output path. Defaults to ~/Library/MobileDevice/Provisioning Profiles/<uuid>.mobileprovision"
+          ]
+        ] as [String: Any],
+        "required": ["profile_id"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_regenerate_profile",
+      description: "Regenerate a provisioning profile with all current devices. Deletes the old profile and creates a new one with the same settings but including all registered devices.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "bundle_id": [
+            "type": "string",
+            "description": "Bundle identifier (e.g., 'com.example.myapp')"
+          ],
+          "profile_type": [
+            "type": "string",
+            "description": "Profile type: IOS_APP_DEVELOPMENT, IOS_APP_ADHOC. Defaults to IOS_APP_DEVELOPMENT"
+          ]
+        ] as [String: Any],
+        "required": ["bundle_id"] as [String]
+      ]
+    ),
   ]
 
   /// Call a tool by name
@@ -864,6 +954,16 @@ public enum MCPTools {
         return try await ascListDevices(arguments: arguments)
       case "asc_register_device":
         return try await ascRegisterDevice(arguments: arguments)
+      case "asc_list_profiles":
+        return try await ascListProfiles(arguments: arguments)
+      case "asc_create_profile":
+        return try await ascCreateProfile(arguments: arguments)
+      case "asc_delete_profile":
+        return try await ascDeleteProfile(arguments: arguments)
+      case "asc_download_profile":
+        return try await ascDownloadProfile(arguments: arguments)
+      case "asc_regenerate_profile":
+        return try await ascRegenerateProfile(arguments: arguments)
       default:
         throw MCPError.unknownTool(name)
     }
@@ -4434,6 +4534,443 @@ public enum MCPTools {
         success: false,
         device: nil,
         alreadyRegistered: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  // MARK: - ASC Profile Management
+
+  struct ASCProfileInfo: Encodable {
+    let id: String
+    let name: String
+    let profileType: String
+    let profileState: String
+    let uuid: String?
+    let expirationDate: String?
+  }
+
+  struct ASCListProfilesResult: Encodable {
+    let success: Bool
+    let profiles: [ASCProfileInfo]?
+    let count: Int?
+    let error: String?
+  }
+
+  struct ASCCreateProfileResult: Encodable {
+    let success: Bool
+    let profile: ASCProfileInfo?
+    let error: String?
+  }
+
+  struct ASCDeleteProfileResult: Encodable {
+    let success: Bool
+    let error: String?
+  }
+
+  struct ASCDownloadProfileResult: Encodable {
+    let success: Bool
+    let path: String?
+    let profileName: String?
+    let error: String?
+  }
+
+  struct ASCRegenerateProfileResult: Encodable {
+    let success: Bool
+    let deletedProfile: String?
+    let newProfile: ASCProfileInfo?
+    let downloadPath: String?
+    let deviceCount: Int?
+    let error: String?
+  }
+
+  static func ascListProfiles(arguments: [String: Any]) async throws -> String {
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCListProfilesResult(
+        success: false,
+        profiles: nil,
+        count: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    let profileType = arguments["profile_type"] as? String
+    let bundleId = arguments["bundle_id"] as? String
+
+    do {
+      let profiles: [ProfileData]
+      if let bundleId = bundleId {
+        profiles = try await AppStoreConnectClient.shared.findProfiles(bundleId: bundleId, profileType: profileType)
+      } else {
+        profiles = try await AppStoreConnectClient.shared.listProfiles(profileType: profileType)
+      }
+
+      let profileInfos = profiles.map { profile in
+        ASCProfileInfo(
+          id: profile.id,
+          name: profile.attributes.name,
+          profileType: profile.attributes.profileType,
+          profileState: profile.attributes.profileState,
+          uuid: profile.attributes.uuid,
+          expirationDate: profile.attributes.expirationDate
+        )
+      }
+
+      return encodeJSON(ASCListProfilesResult(
+        success: true,
+        profiles: profileInfos,
+        count: profileInfos.count,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCListProfilesResult(
+        success: false,
+        profiles: nil,
+        count: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCListProfilesResult(
+        success: false,
+        profiles: nil,
+        count: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascCreateProfile(arguments: [String: Any]) async throws -> String {
+    guard let name = arguments["name"] as? String else {
+      throw ToolError.missingArgument("name")
+    }
+    guard let bundleId = arguments["bundle_id"] as? String else {
+      throw ToolError.missingArgument("bundle_id")
+    }
+    let profileType = arguments["profile_type"] as? String ?? "IOS_APP_DEVELOPMENT"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCCreateProfileResult(
+        success: false,
+        profile: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Find the bundle ID record
+      guard let bundleIdRecord = try await AppStoreConnectClient.shared.findBundleId(identifier: bundleId) else {
+        return encodeJSON(ASCCreateProfileResult(
+          success: false,
+          profile: nil,
+          error: "Bundle ID '\(bundleId)' not found in App Store Connect"
+        ))
+      }
+
+      // Get certificates
+      let certificates: [CertificateListResponse.CertificateData]
+      if profileType.contains("DEVELOPMENT") {
+        certificates = try await AppStoreConnectClient.shared.findDevelopmentCertificates()
+      } else {
+        certificates = try await AppStoreConnectClient.shared.findDistributionCertificates()
+      }
+
+      guard !certificates.isEmpty else {
+        return encodeJSON(ASCCreateProfileResult(
+          success: false,
+          profile: nil,
+          error: "No valid certificates found for profile type \(profileType)"
+        ))
+      }
+
+      // Get devices for development/adhoc profiles
+      var deviceIds: [String]? = nil
+      if profileType.contains("DEVELOPMENT") || profileType.contains("ADHOC") {
+        let devices = try await AppStoreConnectClient.shared.listDevices(platform: "IOS", status: "ENABLED")
+        deviceIds = devices.map { $0.id }
+      }
+
+      // Create the profile
+      let profile = try await AppStoreConnectClient.shared.createProfile(
+        name: name,
+        profileType: profileType,
+        bundleIdId: bundleIdRecord.id,
+        certificateIds: certificates.map { $0.id },
+        deviceIds: deviceIds
+      )
+
+      let profileInfo = ASCProfileInfo(
+        id: profile.id,
+        name: profile.attributes.name,
+        profileType: profile.attributes.profileType,
+        profileState: profile.attributes.profileState,
+        uuid: profile.attributes.uuid,
+        expirationDate: profile.attributes.expirationDate
+      )
+
+      return encodeJSON(ASCCreateProfileResult(
+        success: true,
+        profile: profileInfo,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCCreateProfileResult(
+        success: false,
+        profile: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCCreateProfileResult(
+        success: false,
+        profile: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascDeleteProfile(arguments: [String: Any]) async throws -> String {
+    guard let profileId = arguments["profile_id"] as? String else {
+      throw ToolError.missingArgument("profile_id")
+    }
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCDeleteProfileResult(
+        success: false,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      try await AppStoreConnectClient.shared.deleteProfile(id: profileId)
+      return encodeJSON(ASCDeleteProfileResult(
+        success: true,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCDeleteProfileResult(
+        success: false,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCDeleteProfileResult(
+        success: false,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascDownloadProfile(arguments: [String: Any]) async throws -> String {
+    guard let profileId = arguments["profile_id"] as? String else {
+      throw ToolError.missingArgument("profile_id")
+    }
+    let outputPath = arguments["output_path"] as? String
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCDownloadProfileResult(
+        success: false,
+        path: nil,
+        profileName: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Get profile details first to get UUID for filename
+      let profile = try await AppStoreConnectClient.shared.getProfile(id: profileId)
+
+      // Determine output path
+      let finalPath: String
+      if let outputPath = outputPath {
+        finalPath = (outputPath as NSString).expandingTildeInPath
+      } else {
+        // Install to provisioning profiles directory
+        let uuid = profile.attributes.uuid ?? profileId
+        let profilesDir = FileManager.default.homeDirectoryForCurrentUser
+          .appendingPathComponent("Library/MobileDevice/Provisioning Profiles")
+        // Create directory if needed
+        try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
+        finalPath = profilesDir.appendingPathComponent("\(uuid).mobileprovision").path
+      }
+
+      try await AppStoreConnectClient.shared.downloadProfile(id: profileId, to: finalPath)
+
+      return encodeJSON(ASCDownloadProfileResult(
+        success: true,
+        path: finalPath,
+        profileName: profile.attributes.name,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCDownloadProfileResult(
+        success: false,
+        path: nil,
+        profileName: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCDownloadProfileResult(
+        success: false,
+        path: nil,
+        profileName: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascRegenerateProfile(arguments: [String: Any]) async throws -> String {
+    guard let bundleId = arguments["bundle_id"] as? String else {
+      throw ToolError.missingArgument("bundle_id")
+    }
+    let profileType = arguments["profile_type"] as? String ?? "IOS_APP_DEVELOPMENT"
+
+    // Ensure configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCRegenerateProfileResult(
+        success: false,
+        deletedProfile: nil,
+        newProfile: nil,
+        downloadPath: nil,
+        deviceCount: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    do {
+      // Find existing profile
+      let existingProfiles = try await AppStoreConnectClient.shared.findProfiles(bundleId: bundleId, profileType: profileType)
+      var deletedProfileName: String? = nil
+
+      // Delete existing profile if found
+      if let existing = existingProfiles.first {
+        deletedProfileName = existing.attributes.name
+        try await AppStoreConnectClient.shared.deleteProfile(id: existing.id)
+      }
+
+      // Find bundle ID record
+      guard let bundleIdRecord = try await AppStoreConnectClient.shared.findBundleId(identifier: bundleId) else {
+        return encodeJSON(ASCRegenerateProfileResult(
+          success: false,
+          deletedProfile: deletedProfileName,
+          newProfile: nil,
+          downloadPath: nil,
+          deviceCount: nil,
+          error: "Bundle ID '\(bundleId)' not found in App Store Connect"
+        ))
+      }
+
+      // Get certificates
+      let certificates: [CertificateListResponse.CertificateData]
+      if profileType.contains("DEVELOPMENT") {
+        certificates = try await AppStoreConnectClient.shared.findDevelopmentCertificates()
+      } else {
+        certificates = try await AppStoreConnectClient.shared.findDistributionCertificates()
+      }
+
+      guard !certificates.isEmpty else {
+        return encodeJSON(ASCRegenerateProfileResult(
+          success: false,
+          deletedProfile: deletedProfileName,
+          newProfile: nil,
+          downloadPath: nil,
+          deviceCount: nil,
+          error: "No valid certificates found for profile type \(profileType)"
+        ))
+      }
+
+      // Get all enabled devices
+      var deviceIds: [String]? = nil
+      var deviceCount = 0
+      if profileType.contains("DEVELOPMENT") || profileType.contains("ADHOC") {
+        let devices = try await AppStoreConnectClient.shared.listDevices(platform: "IOS", status: "ENABLED")
+        deviceIds = devices.map { $0.id }
+        deviceCount = devices.count
+      }
+
+      // Create new profile with auto-generated name
+      let profileName = deletedProfileName ?? "\(bundleId) \(profileType)"
+      let profile = try await AppStoreConnectClient.shared.createProfile(
+        name: profileName,
+        profileType: profileType,
+        bundleIdId: bundleIdRecord.id,
+        certificateIds: certificates.map { $0.id },
+        deviceIds: deviceIds
+      )
+
+      // Download and install the profile
+      let uuid = profile.attributes.uuid ?? profile.id
+      let profilesDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/MobileDevice/Provisioning Profiles")
+      try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
+      let downloadPath = profilesDir.appendingPathComponent("\(uuid).mobileprovision").path
+
+      try await AppStoreConnectClient.shared.downloadProfile(id: profile.id, to: downloadPath)
+
+      let profileInfo = ASCProfileInfo(
+        id: profile.id,
+        name: profile.attributes.name,
+        profileType: profile.attributes.profileType,
+        profileState: profile.attributes.profileState,
+        uuid: profile.attributes.uuid,
+        expirationDate: profile.attributes.expirationDate
+      )
+
+      return encodeJSON(ASCRegenerateProfileResult(
+        success: true,
+        deletedProfile: deletedProfileName,
+        newProfile: profileInfo,
+        downloadPath: downloadPath,
+        deviceCount: deviceCount,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCRegenerateProfileResult(
+        success: false,
+        deletedProfile: nil,
+        newProfile: nil,
+        downloadPath: nil,
+        deviceCount: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCRegenerateProfileResult(
+        success: false,
+        deletedProfile: nil,
+        newProfile: nil,
+        downloadPath: nil,
+        deviceCount: nil,
         error: error.localizedDescription
       ))
     }

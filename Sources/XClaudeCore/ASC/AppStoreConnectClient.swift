@@ -309,6 +309,138 @@ public actor AppStoreConnectClient {
     return response.data.first
   }
 
+  // MARK: - Profile Management
+
+  /// List all provisioning profiles
+  public func listProfiles(profileType: String? = nil) async throws -> [ProfileData] {
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: "200")
+    ]
+
+    if let profileType = profileType {
+      queryItems.append(URLQueryItem(name: "filter[profileType]", value: profileType))
+    }
+
+    let response: ProfileListResponse = try await get("profiles", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Get a specific profile by ID (includes profileContent for download)
+  public func getProfile(id: String) async throws -> ProfileData {
+    let response: ProfileResponse = try await get("profiles/\(id)")
+    return response.data
+  }
+
+  /// Find profiles for a bundle identifier
+  public func findProfiles(bundleId: String, profileType: String? = nil) async throws -> [ProfileData] {
+    // First find the bundle ID record
+    guard let bundleIdRecord = try await findBundleId(identifier: bundleId) else {
+      return []
+    }
+
+    // Then filter profiles
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "filter[bundleId]", value: bundleIdRecord.id),
+      URLQueryItem(name: "limit", value: "50")
+    ]
+
+    if let profileType = profileType {
+      queryItems.append(URLQueryItem(name: "filter[profileType]", value: profileType))
+    }
+
+    let response: ProfileListResponse = try await get("profiles", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Create a new provisioning profile
+  public func createProfile(
+    name: String,
+    profileType: String,
+    bundleIdId: String,
+    certificateIds: [String],
+    deviceIds: [String]?
+  ) async throws -> ProfileData {
+    let request = ProfileCreateRequest(
+      name: name,
+      profileType: profileType,
+      bundleIdId: bundleIdId,
+      certificateIds: certificateIds,
+      deviceIds: deviceIds
+    )
+    let response: ProfileResponse = try await post("profiles", body: request)
+    return response.data
+  }
+
+  /// Delete a provisioning profile
+  public func deleteProfile(id: String) async throws {
+    try await delete("profiles/\(id)")
+  }
+
+  /// Download profile content and save to file
+  public func downloadProfile(id: String, to path: String) async throws {
+    let profile = try await getProfile(id: id)
+
+    guard let content = profile.attributes.profileContent else {
+      throw ASCError.decodingFailed("Profile has no content")
+    }
+
+    guard let data = Data(base64Encoded: content) else {
+      throw ASCError.decodingFailed("Failed to decode profile content")
+    }
+
+    let url = URL(fileURLWithPath: path)
+    try data.write(to: url)
+  }
+
+  // MARK: - Bundle ID Management
+
+  /// List all bundle IDs
+  public func listBundleIds() async throws -> [BundleIdListResponse.BundleIdData] {
+    let response: BundleIdListResponse = try await get("bundleIds", queryItems: [
+      URLQueryItem(name: "limit", value: "200")
+    ])
+    return response.data
+  }
+
+  /// Find a bundle ID by identifier string
+  public func findBundleId(identifier: String) async throws -> BundleIdListResponse.BundleIdData? {
+    let response: BundleIdListResponse = try await get("bundleIds", queryItems: [
+      URLQueryItem(name: "filter[identifier]", value: identifier)
+    ])
+    return response.data.first
+  }
+
+  // MARK: - Certificate Management
+
+  /// List all certificates
+  public func listCertificates(certificateType: String? = nil) async throws -> [CertificateListResponse.CertificateData] {
+    var queryItems: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: "200")
+    ]
+
+    if let certType = certificateType {
+      queryItems.append(URLQueryItem(name: "filter[certificateType]", value: certType))
+    }
+
+    let response: CertificateListResponse = try await get("certificates", queryItems: queryItems)
+    return response.data
+  }
+
+  /// Find development certificates
+  public func findDevelopmentCertificates() async throws -> [CertificateListResponse.CertificateData] {
+    // iOS development certificates
+    let iosDev = try await listCertificates(certificateType: "IOS_DEVELOPMENT")
+    let appleDev = try await listCertificates(certificateType: "DEVELOPMENT")
+    return iosDev + appleDev
+  }
+
+  /// Find distribution certificates
+  public func findDistributionCertificates() async throws -> [CertificateListResponse.CertificateData] {
+    let iosDist = try await listCertificates(certificateType: "IOS_DISTRIBUTION")
+    let appleDist = try await listCertificates(certificateType: "DISTRIBUTION")
+    return iosDist + appleDist
+  }
+
   // MARK: - Test Connection
 
   /// Test the API connection by fetching apps
@@ -426,5 +558,133 @@ struct DeviceCreateRequest: Encodable {
         udid: udid
       )
     )
+  }
+}
+
+// MARK: - Profile Types
+
+struct ProfileListResponse: Decodable {
+  let data: [ProfileData]
+}
+
+struct ProfileResponse: Decodable {
+  let data: ProfileData
+}
+
+public struct ProfileData: Decodable {
+  public let id: String
+  public let type: String
+  public let attributes: ProfileAttributes
+}
+
+public struct ProfileAttributes: Decodable {
+  public let name: String
+  public let profileType: String
+  public let profileState: String
+  public let profileContent: String?
+  public let uuid: String?
+  public let createdDate: String?
+  public let expirationDate: String?
+}
+
+struct ProfileCreateRequest: Encodable {
+  let data: ProfileCreateData
+
+  struct ProfileCreateData: Encodable {
+    let type: String
+    let attributes: ProfileCreateAttributes
+    let relationships: ProfileRelationships
+  }
+
+  struct ProfileCreateAttributes: Encodable {
+    let name: String
+    let profileType: String
+  }
+
+  struct ProfileRelationships: Encodable {
+    let bundleId: BundleIdRelationship
+    let certificates: CertificatesRelationship
+    let devices: DevicesRelationship?
+  }
+
+  struct BundleIdRelationship: Encodable {
+    let data: BundleIdData
+  }
+
+  struct BundleIdData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  struct CertificatesRelationship: Encodable {
+    let data: [CertificateData]
+  }
+
+  struct CertificateData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  struct DevicesRelationship: Encodable {
+    let data: [DeviceRelData]
+  }
+
+  struct DeviceRelData: Encodable {
+    let type: String
+    let id: String
+  }
+
+  init(name: String, profileType: String, bundleIdId: String, certificateIds: [String], deviceIds: [String]?) {
+    let bundleIdRel = BundleIdRelationship(data: BundleIdData(type: "bundleIds", id: bundleIdId))
+    let certsRel = CertificatesRelationship(data: certificateIds.map { CertificateData(type: "certificates", id: $0) })
+    let devicesRel = deviceIds.map { ids in
+      DevicesRelationship(data: ids.map { DeviceRelData(type: "devices", id: $0) })
+    }
+
+    self.data = ProfileCreateData(
+      type: "profiles",
+      attributes: ProfileCreateAttributes(name: name, profileType: profileType),
+      relationships: ProfileRelationships(
+        bundleId: bundleIdRel,
+        certificates: certsRel,
+        devices: devicesRel
+      )
+    )
+  }
+}
+
+// MARK: - Bundle ID Types
+
+public struct BundleIdListResponse: Decodable {
+  public let data: [BundleIdData]
+
+  public struct BundleIdData: Decodable {
+    public let id: String
+    public let type: String
+    public let attributes: BundleIdAttributes
+  }
+
+  public struct BundleIdAttributes: Decodable {
+    public let identifier: String
+    public let name: String
+    public let platform: String?
+  }
+}
+
+// MARK: - Certificate Types
+
+public struct CertificateListResponse: Decodable {
+  public let data: [CertificateData]
+
+  public struct CertificateData: Decodable {
+    public let id: String
+    public let type: String
+    public let attributes: CertificateAttributes
+  }
+
+  public struct CertificateAttributes: Decodable {
+    public let name: String?
+    public let certificateType: String
+    public let expirationDate: String?
   }
 }
