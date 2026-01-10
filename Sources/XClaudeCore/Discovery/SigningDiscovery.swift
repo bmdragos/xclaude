@@ -73,18 +73,86 @@ public struct SigningDiscovery {
       let nameRange = lineStr.index(after: nameStart)..<nameEnd
       let name = String(lineStr[nameRange])
 
-      // Extract team ID from name (usually in parentheses at end)
-      var teamId: String? = nil
-      if let teamStart = name.lastIndex(of: "("),
-         let teamEnd = name.lastIndex(of: ")") {
-        let teamRange = name.index(after: teamStart)..<teamEnd
-        teamId = String(name[teamRange])
-      }
+      // Extract team ID from certificate's OU field (more reliable than parsing name)
+      // The name's parentheses contain the user's personal ID, not the org team ID
+      let teamId = await extractTeamIdFromCertificate(name: name, hash: hash)
 
       results.append(SigningIdentity(id: hash, name: name, teamId: teamId))
     }
 
     return results
+  }
+
+  /// Extract the actual team ID from a certificate's OU (Organizational Unit) field
+  /// This is more reliable than parsing from the certificate name, which contains
+  /// the user's personal ID rather than the organization's team ID
+  private func extractTeamIdFromCertificate(name: String, hash: String) async -> String? {
+    // First try to get OU from the certificate using the hash
+    do {
+      let certOutput = try await runCommand(
+        "/usr/bin/security",
+        arguments: ["find-certificate", "-c", name, "-p"]
+      )
+
+      // Parse the PEM certificate to extract OU field
+      let opensslOutput = try await runCommandWithInput(
+        "/usr/bin/openssl",
+        arguments: ["x509", "-noout", "-subject"],
+        input: certOutput
+      )
+
+      // Parse OU from subject line like: subject=...OU=5N8M3V42V6...
+      // Format varies: OU = 5N8M3V42V6 or OU=5N8M3V42V6
+      if let ouRange = opensslOutput.range(of: "OU\\s*=\\s*([A-Z0-9]+)", options: .regularExpression) {
+        let ouMatch = String(opensslOutput[ouRange])
+        // Extract just the value after "OU" and "="
+        let components = ouMatch.components(separatedBy: "=")
+        if components.count >= 2 {
+          return components[1].trimmingCharacters(in: .whitespaces)
+        }
+      }
+    } catch {
+      // Fall back to parsing from name if certificate lookup fails
+    }
+
+    // Fallback: extract from name's parentheses (less reliable for org certs)
+    if let teamStart = name.lastIndex(of: "("),
+       let teamEnd = name.lastIndex(of: ")") {
+      let teamRange = name.index(after: teamStart)..<teamEnd
+      return String(name[teamRange])
+    }
+
+    return nil
+  }
+
+  /// Run a command with stdin input
+  private func runCommandWithInput(
+    _ command: String,
+    arguments: [String],
+    input: String
+  ) async throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: command)
+    process.arguments = arguments
+
+    let stdinPipe = Pipe()
+    let stdoutPipe = Pipe()
+    process.standardInput = stdinPipe
+    process.standardOutput = stdoutPipe
+    process.standardError = FileHandle.nullDevice
+
+    try process.run()
+
+    // Write input to stdin
+    if let inputData = input.data(using: .utf8) {
+      stdinPipe.fileHandleForWriting.write(inputData)
+      stdinPipe.fileHandleForWriting.closeFile()
+    }
+
+    process.waitUntilExit()
+
+    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    return String(data: data, encoding: .utf8) ?? ""
   }
 
   /// Discover provisioning profiles

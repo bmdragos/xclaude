@@ -937,9 +937,14 @@ public enum MCPTools {
       let connectionProperties = device["connectionProperties"] as? [String: Any]
       let transportType = connectionProperties?["transportType"] as? String
 
+      // Fetch hardware UDID (used by provisioning profiles)
+      // CoreDevice UUID != Hardware UDID, profiles use hardware UDID
+      let hardwareUdid = await fetchHardwareUdid(coreDeviceUuid: udid)
+
       results.append(DeviceInfo(
         name: name,
         udid: udid,
+        hardwareUdid: hardwareUdid,
         platform: platform,
         osVersion: osVersion,
         connectionType: transportType
@@ -947,6 +952,34 @@ public enum MCPTools {
     }
 
     return encodeJSON(results)
+  }
+
+  /// Fetch hardware UDID from CoreDevice UUID
+  /// devicectl returns CoreDevice UUID (e.g., 97452CCA-E01F-5542-9E9B-CE54DA7031C2)
+  /// but provisioning profiles use hardware UDID (e.g., 00008130-000605841AE0001C)
+  static func fetchHardwareUdid(coreDeviceUuid: String) async -> String? {
+    do {
+      let output = try await runCommand(
+        "/usr/bin/xcrun",
+        arguments: ["devicectl", "device", "info", "details", "--device", coreDeviceUuid]
+      )
+
+      // Parse output to find: udid: 00008130-000605841AE0001C
+      let lines = output.split(separator: "\n")
+      for line in lines {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        // Look for line like "• udid: 00008130-000605841AE0001C"
+        if trimmed.hasPrefix("• udid:") || trimmed.hasPrefix("udid:") {
+          let parts = trimmed.components(separatedBy: ":")
+          if parts.count >= 2 {
+            return parts[1].trimmingCharacters(in: .whitespaces)
+          }
+        }
+      }
+    } catch {
+      // Device might not be available for detailed query
+    }
+    return nil
   }
 
   static func build(arguments: [String: Any]) async throws -> String {
@@ -3967,7 +4000,8 @@ public enum MCPTools {
 
   struct DeviceInfo: Codable {
     let name: String
-    let udid: String
+    let udid: String  // CoreDevice UUID (e.g., 97452CCA-E01F-5542-9E9B-CE54DA7031C2)
+    let hardwareUdid: String?  // Hardware UDID for provisioning profiles (e.g., 00008130-000605841AE0001C)
     let platform: String
     let osVersion: String?
     let connectionType: String?
