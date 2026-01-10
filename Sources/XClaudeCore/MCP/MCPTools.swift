@@ -528,7 +528,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "archive",
-      description: "Create a release build and package as .ipa for distribution",
+      description: "Create a release build and package as .ipa for iOS distribution. IMPORTANT: For app-store/ad-hoc, requires 'Apple Distribution' certificate (NOT 'Developer ID Application' which is macOS-only).",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -538,7 +538,7 @@ public enum MCPTools {
           ],
           "export_method": [
             "type": "string",
-            "description": "Distribution method: app-store, ad-hoc, development, enterprise",
+            "description": "Distribution method: app-store (TestFlight/App Store, requires Apple Distribution cert), ad-hoc (direct install, requires Apple Distribution cert), development (testing), enterprise (in-house)",
             "enum": ["app-store", "ad-hoc", "development", "enterprise"],
             "default": "ad-hoc"
           ],
@@ -3123,22 +3123,58 @@ public enum MCPTools {
       ))
     }
 
-    // Find distribution identity (prefer "Distribution" certificates)
+    // Find distribution identity based on export method
+    // iOS App Store/TestFlight requires "Apple Distribution" or "iPhone Distribution"
+    // "Developer ID Application" is ONLY for macOS direct distribution (notarized apps outside App Store)
     let distributionIdentities = signingData.identities.filter { identity in
-      identity.teamId == profile.teamId &&
-      (exportMethod == "development" || identity.name.contains("Distribution") || identity.name.contains("Developer ID"))
+      guard identity.teamId == profile.teamId else { return false }
+
+      if exportMethod == "development" {
+        return true // Any identity works for development
+      }
+
+      // For iOS distribution (app-store, ad-hoc), require Distribution cert but NOT Developer ID
+      // Developer ID is for macOS direct distribution only
+      let isDistribution = identity.name.contains("Distribution")
+      let isDeveloperId = identity.name.contains("Developer ID")
+
+      return isDistribution && !isDeveloperId
     }
+
+    // Check if user has Developer ID but not Apple Distribution (common mistake)
+    let hasDeveloperIdOnly = signingData.identities.contains {
+      $0.teamId == profile.teamId && $0.name.contains("Developer ID")
+    } && distributionIdentities.isEmpty
 
     let identity = distributionIdentities.first ?? signingData.identities.first { $0.teamId == profile.teamId }
 
     guard let identity = identity else {
+      var message = "No signing identity found for team '\(profile.teamId)'"
+      if hasDeveloperIdOnly {
+        message = "Found 'Developer ID Application' certificate, but iOS App Store/TestFlight requires 'Apple Distribution' certificate. " +
+          "Go to https://developer.apple.com/account/resources/certificates to create an Apple Distribution certificate."
+      }
       return encodeJSON(ArchiveResult(
         success: false,
         ipaPath: nil,
         appPath: appPath,
         exportMethod: exportMethod,
         signingInfo: nil,
-        message: "No signing identity found for team '\(profile.teamId)'"
+        message: message
+      ))
+    }
+
+    // Warn if using wrong certificate type (shouldn't happen after filter above, but safety check)
+    if identity.name.contains("Developer ID") && (exportMethod == "app-store" || exportMethod == "ad-hoc") {
+      return encodeJSON(ArchiveResult(
+        success: false,
+        ipaPath: nil,
+        appPath: appPath,
+        exportMethod: exportMethod,
+        signingInfo: nil,
+        message: "Cannot use 'Developer ID Application' certificate for iOS \(exportMethod). " +
+          "Developer ID is for macOS direct distribution only. " +
+          "Create an 'Apple Distribution' certificate at https://developer.apple.com/account/resources/certificates"
       ))
     }
 

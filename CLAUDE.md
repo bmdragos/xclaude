@@ -162,11 +162,22 @@ Many capabilities work differently across platforms:
 
 `ConfigUpdater.swift` handles this with the `platform` property on capabilities - check `.iOS`, `.macOS`, or `.both`.
 
-### 7. Provisioning profile troubleshooting
+### 7. iOS vs macOS certificate types
+Different certificate types for different distribution methods:
+
+| Certificate | Use For |
+|-------------|---------|
+| Apple Development | Development builds (any platform) |
+| Apple Distribution | App Store / TestFlight (iOS + macOS) |
+| Developer ID Application | macOS direct distribution (notarized, outside App Store) |
+
+**Common mistake**: Using "Developer ID Application" for iOS TestFlight. This will fail silently - the build uploads but never processes. The `archive` tool now validates this and returns a clear error with instructions.
+
+### 8. Provisioning profile troubleshooting
 Common "A valid provisioning profile was not found" causes:
 1. **Certificate not in profile**: Profile created before your signing cert existed → regenerate profile
 2. **Device not registered**: Your device UDID isn't in the profile → add device to Apple Portal, regenerate profile
-3. **Entitlement mismatch**: App has entitlements the profile doesn't allow → see pitfall #5
+3. **Entitlement mismatch**: App has entitlements the profile doesn't allow → see pitfall #6
 4. **Wrong profile cached**: Delete `.build/` and rebuild
 
 **Device UDID confusion**: `devicectl` shows CoreDevice UUID (97452CCA-E01F-5542-...), but Apple Portal uses hardware UDID (00008130-000605841AE0...). Both refer to the same device.
