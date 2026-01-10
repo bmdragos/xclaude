@@ -709,6 +709,38 @@ public enum MCPTools {
         "required": ["spec"] as [String]
       ]
     ),
+    // App Store Connect API tools
+    Tool(
+      name: "asc_configure",
+      description: "Configure App Store Connect API credentials. Get these from App Store Connect → Users and Access → Keys.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "issuer_id": [
+            "type": "string",
+            "description": "Issuer ID from App Store Connect"
+          ],
+          "key_id": [
+            "type": "string",
+            "description": "API Key ID (optional - auto-extracted from AuthKey_XXXXX.p8 filename)"
+          ],
+          "key_path": [
+            "type": "string",
+            "description": "Path to the .p8 private key file"
+          ]
+        ] as [String: Any],
+        "required": ["issuer_id", "key_path"] as [String]
+      ]
+    ),
+    Tool(
+      name: "asc_status",
+      description: "Check App Store Connect API configuration status and test the connection",
+      inputSchema: [
+        "type": "object",
+        "properties": [:] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
   ]
 
   /// Call a tool by name
@@ -784,6 +816,10 @@ public enum MCPTools {
         return try await addExtension(arguments: arguments)
       case "generate_api_client":
         return try await generateAPIClient(arguments: arguments)
+      case "asc_configure":
+        return try await ascConfigure(arguments: arguments)
+      case "asc_status":
+        return try await ascStatus()
       default:
         throw MCPError.unknownTool(name)
     }
@@ -4047,6 +4083,155 @@ public enum MCPTools {
 
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     return String(data: data, encoding: .utf8) ?? ""
+  }
+
+  // MARK: - App Store Connect API
+
+  struct ASCConfigureResult: Encodable {
+    let success: Bool
+    let message: String?
+    let error: String?
+  }
+
+  struct ASCStatusResult: Encodable {
+    let configured: Bool
+    let issuerId: String?
+    let keyId: String?
+    let keyPath: String?
+    let connectionTest: String?
+    let error: String?
+  }
+
+  static func ascConfigure(arguments: [String: Any]) async throws -> String {
+    guard let issuerId = arguments["issuer_id"] as? String else {
+      throw ToolError.missingArgument("issuer_id")
+    }
+    guard let keyPath = arguments["key_path"] as? String else {
+      throw ToolError.missingArgument("key_path")
+    }
+
+    // Auto-extract key_id from filename if not provided (AuthKey_XXXXX.p8)
+    let keyId: String
+    if let providedKeyId = arguments["key_id"] as? String {
+      keyId = providedKeyId
+    } else {
+      let filename = URL(fileURLWithPath: keyPath).lastPathComponent
+      if filename.hasPrefix("AuthKey_") && filename.hasSuffix(".p8") {
+        keyId = String(filename.dropFirst(8).dropLast(3))  // Remove "AuthKey_" and ".p8"
+      } else {
+        throw ToolError.missingArgument("key_id (could not auto-extract from filename - expected AuthKey_XXXXX.p8)")
+      }
+    }
+
+    // Copy key file to ~/.xclaude/ for safekeeping
+    let expandedKeyPath = (keyPath as NSString).expandingTildeInPath
+    let sourceURL = URL(fileURLWithPath: expandedKeyPath)
+    let xclaudeDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".xclaude")
+    let destURL = xclaudeDir.appendingPathComponent("AuthKey_\(keyId).p8")
+
+    let finalKeyPath: String
+    do {
+      try FileManager.default.createDirectory(at: xclaudeDir, withIntermediateDirectories: true)
+      if FileManager.default.fileExists(atPath: destURL.path) {
+        try FileManager.default.removeItem(at: destURL)
+      }
+      try FileManager.default.copyItem(at: sourceURL, to: destURL)
+      // Set restrictive permissions (owner read only)
+      try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: destURL.path)
+      finalKeyPath = destURL.path
+    } catch {
+      // Fall back to original path if copy fails
+      finalKeyPath = expandedKeyPath
+    }
+
+    let credentials = AppStoreConnectClient.Credentials(
+      issuerId: issuerId,
+      keyId: keyId,
+      privateKeyPath: finalKeyPath
+    )
+
+    do {
+      // Validate and configure
+      try await AppStoreConnectClient.shared.configure(credentials: credentials)
+
+      // Save to disk
+      try ASCCredentialStore.save(credentials)
+
+      // Test connection
+      let testResult = try await AppStoreConnectClient.shared.testConnection()
+
+      let keyLocation = finalKeyPath.contains(".xclaude") ? "Key copied to ~/.xclaude/. " : ""
+      return encodeJSON(ASCConfigureResult(
+        success: true,
+        message: "\(keyLocation)Credentials saved. \(testResult)",
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCConfigureResult(
+        success: false,
+        message: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCConfigureResult(
+        success: false,
+        message: nil,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
+  static func ascStatus() async throws -> String {
+    // Try to load stored credentials if not already configured
+    if await !AppStoreConnectClient.shared.isConfigured() {
+      if let stored = try? ASCCredentialStore.load() {
+        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+      }
+    }
+
+    guard await AppStoreConnectClient.shared.isConfigured() else {
+      return encodeJSON(ASCStatusResult(
+        configured: false,
+        issuerId: nil,
+        keyId: nil,
+        keyPath: nil,
+        connectionTest: nil,
+        error: "Not configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    let creds = await AppStoreConnectClient.shared.currentCredentials()
+
+    // Test connection
+    do {
+      let testResult = try await AppStoreConnectClient.shared.testConnection()
+      return encodeJSON(ASCStatusResult(
+        configured: true,
+        issuerId: creds?.issuerId,
+        keyId: creds?.keyId,
+        keyPath: creds?.keyPath,
+        connectionTest: testResult,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCStatusResult(
+        configured: true,
+        issuerId: creds?.issuerId,
+        keyId: creds?.keyId,
+        keyPath: creds?.keyPath,
+        connectionTest: nil,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCStatusResult(
+        configured: true,
+        issuerId: creds?.issuerId,
+        keyId: creds?.keyId,
+        keyPath: creds?.keyPath,
+        connectionTest: nil,
+        error: error.localizedDescription
+      ))
+    }
   }
 }
 
