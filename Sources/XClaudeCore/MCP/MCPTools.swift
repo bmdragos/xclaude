@@ -712,10 +712,14 @@ public enum MCPTools {
     // App Store Connect API tools
     Tool(
       name: "asc_configure",
-      description: "Configure App Store Connect API credentials. Get these from App Store Connect → Users and Access → Keys.",
+      description: "Configure App Store Connect API credentials. Get these from App Store Connect → Users and Access → Keys. Use 'profile' to save multiple accounts (e.g., 'personal', 'work').",
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Profile name to save credentials under (e.g., 'personal', 'work'). Defaults to 'default'"
+          ],
           "issuer_id": [
             "type": "string",
             "description": "Issuer ID from App Store Connect"
@@ -734,10 +738,15 @@ public enum MCPTools {
     ),
     Tool(
       name: "asc_status",
-      description: "Check App Store Connect API configuration status and test the connection",
+      description: "Check App Store Connect API configuration status and test the connection. Shows all configured profiles if no profile specified.",
       inputSchema: [
         "type": "object",
-        "properties": [:] as [String: Any],
+        "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Profile name to check (shows all profiles if omitted)"
+          ]
+        ] as [String: Any],
         "required": [] as [String]
       ]
     ),
@@ -747,6 +756,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "platform": [
             "type": "string",
             "description": "Filter by platform (IOS, MAC_OS, etc.)"
@@ -765,6 +778,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "name": [
             "type": "string",
             "description": "Device name (e.g., 'John's iPhone 15 Pro')"
@@ -787,6 +804,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "profile_type": [
             "type": "string",
             "description": "Filter by type: IOS_APP_DEVELOPMENT, IOS_APP_ADHOC, IOS_APP_STORE, MAC_APP_DEVELOPMENT, MAC_APP_STORE, MAC_APP_DIRECT"
@@ -805,6 +826,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "name": [
             "type": "string",
             "description": "Profile name (e.g., 'MyApp Development')"
@@ -827,6 +852,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "profile_id": [
             "type": "string",
             "description": "Profile ID from asc_list_profiles"
@@ -841,6 +870,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "profile_id": [
             "type": "string",
             "description": "Profile ID from asc_list_profiles"
@@ -859,6 +892,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "bundle_id": [
             "type": "string",
             "description": "Bundle identifier (e.g., 'com.example.myapp')"
@@ -878,6 +915,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "certificate_type": [
             "type": "string",
             "description": "Filter by type: IOS_DEVELOPMENT, IOS_DISTRIBUTION, DEVELOPMENT, DISTRIBUTION, DEVELOPER_ID_APPLICATION, DEVELOPER_ID_KEXT, MAC_APP_DEVELOPMENT, MAC_APP_DISTRIBUTION"
@@ -892,6 +933,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "certificate_type": [
             "type": "string",
             "description": "Certificate type: DISTRIBUTION (for App Store/TestFlight), DEVELOPMENT (for dev builds), DEVELOPER_ID_APPLICATION (macOS direct distribution)",
@@ -911,6 +956,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "certificate_id": [
             "type": "string",
             "description": "Certificate ID from asc_list_certificates"
@@ -926,6 +975,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "app_id": [
             "type": "string",
             "description": "Filter testers by app ID (from apps list)"
@@ -944,6 +997,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "email": [
             "type": "string",
             "description": "Tester's email address"
@@ -971,6 +1028,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "email": [
             "type": "string",
             "description": "Tester's email address to remove"
@@ -985,6 +1046,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "app_id": [
             "type": "string",
             "description": "Filter by app ID (optional)"
@@ -999,6 +1064,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "app_id": [
             "type": "string",
             "description": "App ID to list builds for (required)"
@@ -1017,6 +1086,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "build_id": [
             "type": "string",
             "description": "Build ID to update"
@@ -1038,7 +1111,12 @@ public enum MCPTools {
       description: "List apps in App Store Connect. Useful to get app IDs for other commands.",
       inputSchema: [
         "type": "object",
-        "properties": [:] as [String: Any],
+        "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ]
+        ] as [String: Any],
         "required": [] as [String]
       ]
     ),
@@ -1047,7 +1125,12 @@ public enum MCPTools {
       description: "List all registered bundle identifiers in App Store Connect.",
       inputSchema: [
         "type": "object",
-        "properties": [:] as [String: Any],
+        "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ]
+        ] as [String: Any],
         "required": [] as [String]
       ]
     ),
@@ -1057,6 +1140,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "identifier": [
             "type": "string",
             "description": "Bundle identifier (e.g., 'com.example.myapp')"
@@ -1079,6 +1166,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "bundle_id": [
             "type": "string",
             "description": "Bundle identifier (must already be registered)"
@@ -1105,6 +1196,10 @@ public enum MCPTools {
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "app_id": [
             "type": "string",
             "description": "App ID to create group for"
@@ -1126,11 +1221,33 @@ public enum MCPTools {
       ]
     ),
     Tool(
+      name: "asc_delete_group",
+      description: "Delete a TestFlight beta group.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
+          "group_id": [
+            "type": "string",
+            "description": "Beta group ID to delete"
+          ]
+        ] as [String: Any],
+        "required": ["group_id"] as [String]
+      ]
+    ),
+    Tool(
       name: "asc_add_build_to_group",
       description: "Add a build to a beta group for distribution to testers.",
       inputSchema: [
         "type": "object",
         "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
           "group_id": [
             "type": "string",
             "description": "Beta group ID"
@@ -1221,7 +1338,7 @@ public enum MCPTools {
       case "asc_configure":
         return try await ascConfigure(arguments: arguments)
       case "asc_status":
-        return try await ascStatus()
+        return try await ascStatus(arguments: arguments)
       case "asc_list_devices":
         return try await ascListDevices(arguments: arguments)
       case "asc_register_device":
@@ -1255,15 +1372,17 @@ public enum MCPTools {
       case "asc_set_whats_new":
         return try await ascSetWhatsNew(arguments: arguments)
       case "asc_list_apps":
-        return try await ascListApps()
+        return try await ascListApps(arguments: arguments)
       case "asc_list_bundle_ids":
-        return try await ascListBundleIds()
+        return try await ascListBundleIds(arguments: arguments)
       case "asc_create_bundle_id":
         return try await ascCreateBundleId(arguments: arguments)
       case "asc_create_app":
         return try await ascCreateApp(arguments: arguments)
       case "asc_create_group":
         return try await ascCreateGroup(arguments: arguments)
+      case "asc_delete_group":
+        return try await ascDeleteGroup(arguments: arguments)
       case "asc_add_build_to_group":
         return try await ascAddBuildToGroup(arguments: arguments)
       default:
@@ -3138,19 +3257,6 @@ public enum MCPTools {
     let discovery = SigningDiscovery()
     let signingData = try await discovery.discoverAll()
 
-    // Find appropriate profile based on export method
-    let profileType: String
-    switch exportMethod {
-    case "app-store":
-      profileType = "App Store"
-    case "ad-hoc":
-      profileType = "Ad Hoc"
-    case "enterprise":
-      profileType = "Enterprise"
-    default:
-      profileType = "Development"
-    }
-
     // Find matching profile for distribution
     let matchingProfiles = signingData.profiles.filter { profile in
       // Match bundle ID
@@ -3166,7 +3272,34 @@ public enum MCPTools {
       return matchesBundleId && !profile.isExpired && isDistribution
     }
 
-    guard let profile = matchingProfiles.first else {
+    // Sort profiles: exact matches first, then by profile type preference
+    let sortedProfiles = matchingProfiles.sorted { a, b in
+      // 1. Exact bundle ID match beats wildcard
+      let aExact = a.bundleIdPattern == bundleId
+      let bExact = b.bundleIdPattern == bundleId
+      if aExact != bExact { return aExact }
+
+      // 2. For app-store, prefer "App Store" in name
+      if exportMethod == "app-store" {
+        let aAppStore = a.name.lowercased().contains("app store")
+        let bAppStore = b.name.lowercased().contains("app store")
+        if aAppStore != bAppStore { return aAppStore }
+      }
+
+      // 3. For ad-hoc, prefer "Ad Hoc" in name
+      if exportMethod == "ad-hoc" {
+        let aAdHoc = a.name.lowercased().contains("ad hoc") || a.name.lowercased().contains("adhoc")
+        let bAdHoc = b.name.lowercased().contains("ad hoc") || b.name.lowercased().contains("adhoc")
+        if aAdHoc != bAdHoc { return aAdHoc }
+      }
+
+      // 4. Non-wildcard beats wildcard
+      if a.isWildcard != b.isWildcard { return !a.isWildcard }
+
+      return false
+    }
+
+    guard let profile = sortedProfiles.first else {
       return encodeJSON(ArchiveResult(
         success: false,
         ipaPath: nil,
@@ -3232,9 +3365,57 @@ public enum MCPTools {
       ))
     }
 
-    // Step 3: Re-sign the app with distribution credentials if needed
-    // The app was already signed during build, but we may need to re-sign for distribution
-    // For now, we'll use the existing signature (BuildRunner handles signing)
+    // Step 3: Re-sign the app with distribution credentials
+    // The app was signed during build with dev credentials, now re-sign for distribution
+    let appURL = URL(fileURLWithPath: appPath)
+
+    // Copy provisioning profile into app bundle
+    let embeddedProfilePath = appURL.appendingPathComponent("embedded.mobileprovision").path
+    do {
+      // Remove existing profile if any
+      try? FileManager.default.removeItem(atPath: embeddedProfilePath)
+      // Copy distribution profile
+      try FileManager.default.copyItem(atPath: profile.path, toPath: embeddedProfilePath)
+    } catch {
+      return encodeJSON(ArchiveResult(
+        success: false,
+        ipaPath: nil,
+        appPath: appPath,
+        exportMethod: exportMethod,
+        signingInfo: nil,
+        message: "Failed to embed provisioning profile: \(error.localizedDescription)"
+      ))
+    }
+
+    // Re-sign with distribution identity
+    let entitlementsPath = projectURL.appendingPathComponent(".xclaude/derived/Entitlements.plist").path
+    var codesignArgs = ["--force", "--sign", identity.name, "--timestamp"]
+    if FileManager.default.fileExists(atPath: entitlementsPath) {
+      codesignArgs += ["--entitlements", entitlementsPath]
+    }
+    codesignArgs.append(appPath)
+
+    _ = try await runCommand("/usr/bin/codesign", arguments: codesignArgs)
+
+    // Verify signing succeeded
+    let verifyProcess = Process()
+    verifyProcess.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+    verifyProcess.arguments = ["--verify", "--deep", "--strict", appPath]
+    verifyProcess.standardOutput = FileHandle.nullDevice
+    verifyProcess.standardError = FileHandle.nullDevice
+    try verifyProcess.run()
+    verifyProcess.waitUntilExit()
+
+    if verifyProcess.terminationStatus != 0 {
+      return encodeJSON(ArchiveResult(
+        success: false,
+        ipaPath: nil,
+        appPath: appPath,
+        exportMethod: exportMethod,
+        signingInfo: nil,
+        message: "Code signing verification failed. The app may not be properly signed for \(exportMethod) distribution."
+      ))
+    }
 
     // Step 4: Create .ipa structure
     // .ipa is a zip file with Payload/AppName.app structure
@@ -4594,6 +4775,8 @@ public enum MCPTools {
   }
 
   static func ascConfigure(arguments: [String: Any]) async throws -> String {
+    let profileName = arguments["profile"] as? String ?? ASCCredentialStore.defaultProfile
+
     guard let issuerId = arguments["issuer_id"] as? String else {
       throw ToolError.missingArgument("issuer_id")
     }
@@ -4645,16 +4828,17 @@ public enum MCPTools {
       // Validate and configure
       try await AppStoreConnectClient.shared.configure(credentials: credentials)
 
-      // Save to disk
-      try ASCCredentialStore.save(credentials)
+      // Save to disk under the specified profile
+      try ASCCredentialStore.save(credentials, profile: profileName)
 
       // Test connection
       let testResult = try await AppStoreConnectClient.shared.testConnection()
 
       let keyLocation = finalKeyPath.contains(".xclaude") ? "Key copied to ~/.xclaude/. " : ""
+      let profileInfo = profileName == ASCCredentialStore.defaultProfile ? "" : "Profile '\(profileName)' "
       return encodeJSON(ASCConfigureResult(
         success: true,
-        message: "\(keyLocation)Credentials saved. \(testResult)",
+        message: "\(keyLocation)\(profileInfo)Credentials saved. \(testResult)",
         error: nil
       ))
     } catch let error as AppStoreConnectClient.ASCError {
@@ -4672,56 +4856,133 @@ public enum MCPTools {
     }
   }
 
-  static func ascStatus() async throws -> String {
-    // Try to load stored credentials if not already configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
+  struct ASCProfileStatus: Encodable {
+    let profile: String
+    let issuerId: String
+    let keyId: String
+    let status: String
+    let connectionTest: String?
+    let error: String?
+  }
+
+  struct ASCMultiStatusResult: Encodable {
+    let configured: Bool
+    let profileCount: Int?
+    let profiles: [ASCProfileStatus]?
+    let error: String?
+  }
+
+  static func ascStatus(arguments: [String: Any]) async throws -> String {
+    let requestedProfile = arguments["profile"] as? String
+
+    // Get all configured profiles
+    let profiles = ASCCredentialStore.listProfiles()
+
+    if profiles.isEmpty {
+      return encodeJSON(ASCMultiStatusResult(
+        configured: false,
+        profileCount: 0,
+        profiles: nil,
+        error: "No profiles configured. Use asc_configure to set up credentials."
+      ))
+    }
+
+    // If specific profile requested, show just that one
+    if let profileName = requestedProfile {
+      guard let creds = try? ASCCredentialStore.load(profile: profileName) else {
+        return encodeJSON(ASCMultiStatusResult(
+          configured: false,
+          profileCount: nil,
+          profiles: nil,
+          error: "Profile '\(profileName)' not found. Available: \(profiles.joined(separator: ", "))"
+        ))
+      }
+
+      // Configure and test this profile
+      try await AppStoreConnectClient.shared.configure(credentials: creds)
+
+      do {
+        let testResult = try await AppStoreConnectClient.shared.testConnection()
+        return encodeJSON(ASCStatusResult(
+          configured: true,
+          issuerId: creds.issuerId,
+          keyId: creds.keyId,
+          keyPath: creds.privateKeyPath,
+          connectionTest: testResult,
+          error: nil
+        ))
+      } catch {
+        return encodeJSON(ASCStatusResult(
+          configured: true,
+          issuerId: creds.issuerId,
+          keyId: creds.keyId,
+          keyPath: creds.privateKeyPath,
+          connectionTest: nil,
+          error: error.localizedDescription
+        ))
       }
     }
 
-    guard await AppStoreConnectClient.shared.isConfigured() else {
-      return encodeJSON(ASCStatusResult(
-        configured: false,
-        issuerId: nil,
-        keyId: nil,
-        keyPath: nil,
-        connectionTest: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
-      ))
+    // Show all profiles with their status
+    var profileStatuses: [ASCProfileStatus] = []
+
+    for profileName in profiles {
+      guard let creds = try? ASCCredentialStore.load(profile: profileName) else { continue }
+
+      // Configure and test each profile
+      try? await AppStoreConnectClient.shared.configure(credentials: creds)
+
+      do {
+        let testResult = try await AppStoreConnectClient.shared.testConnection()
+        profileStatuses.append(ASCProfileStatus(
+          profile: profileName,
+          issuerId: creds.issuerId,
+          keyId: creds.keyId,
+          status: "connected",
+          connectionTest: testResult,
+          error: nil
+        ))
+      } catch {
+        profileStatuses.append(ASCProfileStatus(
+          profile: profileName,
+          issuerId: creds.issuerId,
+          keyId: creds.keyId,
+          status: "error",
+          connectionTest: nil,
+          error: error.localizedDescription
+        ))
+      }
     }
 
-    let creds = await AppStoreConnectClient.shared.currentCredentials()
+    return encodeJSON(ASCMultiStatusResult(
+      configured: true,
+      profileCount: profiles.count,
+      profiles: profileStatuses,
+      error: nil
+    ))
+  }
 
-    // Test connection
+  // MARK: - ASC Profile Helper
+
+  /// Configures the ASC client for the specified profile
+  /// Returns an error message if configuration fails, nil if successful
+  static func configureASCClient(arguments: [String: Any]) async -> String? {
+    let profileName = arguments["profile"] as? String ?? ASCCredentialStore.defaultProfile
+
+    guard let credentials = try? ASCCredentialStore.load(profile: profileName) else {
+      let profiles = ASCCredentialStore.listProfiles()
+      if profiles.isEmpty {
+        return "No profiles configured. Use asc_configure to set up credentials."
+      } else {
+        return "Profile '\(profileName)' not found. Available profiles: \(profiles.joined(separator: ", "))"
+      }
+    }
+
     do {
-      let testResult = try await AppStoreConnectClient.shared.testConnection()
-      return encodeJSON(ASCStatusResult(
-        configured: true,
-        issuerId: creds?.issuerId,
-        keyId: creds?.keyId,
-        keyPath: creds?.keyPath,
-        connectionTest: testResult,
-        error: nil
-      ))
-    } catch let error as AppStoreConnectClient.ASCError {
-      return encodeJSON(ASCStatusResult(
-        configured: true,
-        issuerId: creds?.issuerId,
-        keyId: creds?.keyId,
-        keyPath: creds?.keyPath,
-        connectionTest: nil,
-        error: error.errorDescription
-      ))
+      try await AppStoreConnectClient.shared.configure(credentials: credentials)
+      return nil  // Success
     } catch {
-      return encodeJSON(ASCStatusResult(
-        configured: true,
-        issuerId: creds?.issuerId,
-        keyId: creds?.keyId,
-        keyPath: creds?.keyPath,
-        connectionTest: nil,
-        error: error.localizedDescription
-      ))
+      return "Failed to configure ASC client: \(error.localizedDescription)"
     }
   }
 
@@ -4752,19 +5013,12 @@ public enum MCPTools {
   }
 
   static func ascListDevices(arguments: [String: Any]) async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListDevicesResult(
         success: false,
         devices: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -4816,19 +5070,12 @@ public enum MCPTools {
     }
     let platform = arguments["platform"] as? String ?? "IOS"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCRegisterDeviceResult(
         success: false,
         device: nil,
         alreadyRegistered: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -4932,19 +5179,12 @@ public enum MCPTools {
   }
 
   static func ascListProfiles(arguments: [String: Any]) async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListProfilesResult(
         success: false,
         profiles: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5002,18 +5242,11 @@ public enum MCPTools {
     }
     let profileType = arguments["profile_type"] as? String ?? "IOS_APP_DEVELOPMENT"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCCreateProfileResult(
         success: false,
         profile: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5093,17 +5326,10 @@ public enum MCPTools {
       throw ToolError.missingArgument("profile_id")
     }
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCDeleteProfileResult(
         success: false,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5132,19 +5358,12 @@ public enum MCPTools {
     }
     let outputPath = arguments["output_path"] as? String
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCDownloadProfileResult(
         success: false,
         path: nil,
         profileName: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5197,21 +5416,14 @@ public enum MCPTools {
     }
     let profileType = arguments["profile_type"] as? String ?? "IOS_APP_DEVELOPMENT"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCRegenerateProfileResult(
         success: false,
         deletedProfile: nil,
         newProfile: nil,
         downloadPath: nil,
         deviceCount: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5359,19 +5571,12 @@ public enum MCPTools {
   static func ascListCertificates(arguments: [String: Any]) async throws -> String {
     let certificateType = arguments["certificate_type"] as? String
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListCertificatesResult(
         success: false,
         certificates: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5418,20 +5623,13 @@ public enum MCPTools {
     }
     let commonName = arguments["common_name"] as? String ?? NSFullUserName()
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCCreateCertificateResult(
         success: false,
         certificate: nil,
         downloadPath: nil,
         keychainInstalled: nil,
-        error: "Not configured. Use asc_configure to set up credentials.",
+        error: error,
         hint: nil
       ))
     }
@@ -5529,10 +5727,14 @@ public enum MCPTools {
         keychainInstalled = importProcess.terminationStatus == 0
       }
 
-      // Clean up temp files (keep .cer for reference)
+      // Save files to Downloads (keep .p12 which has private key + cert for manual import if needed)
+      let baseName = (cert.attributes.name ?? certificateType).replacingOccurrences(of: ":", with: "")
       let finalCerPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Downloads/\(cert.attributes.name ?? certificateType)_\(cert.id.prefix(8)).cer").path
+        .appendingPathComponent("Downloads/\(baseName)_\(cert.id.prefix(8)).cer").path
+      let finalP12Path = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Downloads/\(baseName)_\(cert.id.prefix(8)).p12").path
       try? FileManager.default.copyItem(atPath: cerPath, toPath: finalCerPath)
+      try? FileManager.default.copyItem(atPath: p12Path, toPath: finalP12Path)
       try? FileManager.default.removeItem(at: tempDir)
 
       let certInfo = ASCCertificateInfo(
@@ -5546,7 +5748,7 @@ public enum MCPTools {
 
       var hint: String? = nil
       if !keychainInstalled {
-        hint = "Certificate was created but may not have been imported to keychain. Double-click the .cer file at \(finalCerPath) to install manually."
+        hint = "Certificate was created but automatic keychain import failed. Double-click the .p12 file at \(finalP12Path) to install manually (password is empty)."
       }
 
       return encodeJSON(ASCCreateCertificateResult(
@@ -5583,18 +5785,11 @@ public enum MCPTools {
       throw ToolError.missingArgument("certificate_id")
     }
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCRevokeCertificateResult(
         success: false,
         certificateId: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5701,19 +5896,12 @@ public enum MCPTools {
   }
 
   static func ascListTesters(arguments: [String: Any]) async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListTestersResult(
         success: false,
         testers: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5763,19 +5951,12 @@ public enum MCPTools {
     let lastName = arguments["last_name"] as? String
     let groupIds = arguments["group_ids"] as? [String]
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCAddTesterResult(
         success: false,
         tester: nil,
         alreadyExists: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5841,17 +6022,10 @@ public enum MCPTools {
       throw ToolError.missingArgument("email")
     }
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCRemoveTesterResult(
         success: false,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5883,19 +6057,12 @@ public enum MCPTools {
   }
 
   static func ascListGroups(arguments: [String: Any]) async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListGroupsResult(
         success: false,
         groups: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5940,19 +6107,12 @@ public enum MCPTools {
     }
     let limit = arguments["limit"] as? Int ?? 10
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListBuildsResult(
         success: false,
         builds: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -5999,19 +6159,12 @@ public enum MCPTools {
     }
     let locale = arguments["locale"] as? String ?? "en-US"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCSetWhatsNewResult(
         success: false,
         locale: nil,
         whatsNew: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -6040,20 +6193,13 @@ public enum MCPTools {
     }
   }
 
-  static func ascListApps() async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+  static func ascListApps(arguments: [String: Any]) async throws -> String {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListAppsResult(
         success: false,
         apps: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -6107,20 +6253,13 @@ public enum MCPTools {
     let platform: String?
   }
 
-  static func ascListBundleIds() async throws -> String {
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+  static func ascListBundleIds(arguments: [String: Any]) async throws -> String {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCListBundleIdsResult(
         success: false,
         bundleIds: nil,
         count: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -6174,18 +6313,11 @@ public enum MCPTools {
     }
     let platform = arguments["platform"] as? String ?? "IOS"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCCreateBundleIdResult(
         success: false,
         bundleId: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -6242,18 +6374,11 @@ public enum MCPTools {
     }
     let primaryLocale = arguments["primary_locale"] as? String ?? "en-US"
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCCreateAppResult(
         success: false,
         app: nil,
-        error: "Not configured. Use asc_configure to set up credentials.",
+        error: error,
         appleApiLimitation: nil,
         manualSteps: nil
       ))
@@ -6344,18 +6469,11 @@ public enum MCPTools {
     let isInternal = arguments["is_internal"] as? Bool ?? false
     let publicLinkEnabled = arguments["public_link_enabled"] as? Bool ?? false
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCCreateGroupResult(
         success: false,
         group: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 
@@ -6391,6 +6509,49 @@ public enum MCPTools {
     }
   }
 
+  // MARK: - ASC Delete Group
+
+  struct ASCDeleteGroupResult: Encodable {
+    let success: Bool
+    let groupId: String
+    let error: String?
+  }
+
+  static func ascDeleteGroup(arguments: [String: Any]) async throws -> String {
+    guard let groupId = arguments["group_id"] as? String else {
+      throw ToolError.missingArgument("group_id")
+    }
+
+    if let error = await configureASCClient(arguments: arguments) {
+      return encodeJSON(ASCDeleteGroupResult(
+        success: false,
+        groupId: groupId,
+        error: error
+      ))
+    }
+
+    do {
+      try await AppStoreConnectClient.shared.deleteBetaGroup(id: groupId)
+      return encodeJSON(ASCDeleteGroupResult(
+        success: true,
+        groupId: groupId,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCDeleteGroupResult(
+        success: false,
+        groupId: groupId,
+        error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCDeleteGroupResult(
+        success: false,
+        groupId: groupId,
+        error: error.localizedDescription
+      ))
+    }
+  }
+
   // MARK: - ASC Add Build to Group
 
   struct ASCAddBuildToGroupResult: Encodable {
@@ -6408,19 +6569,12 @@ public enum MCPTools {
       throw ToolError.missingArgument("build_id")
     }
 
-    // Ensure configured
-    if await !AppStoreConnectClient.shared.isConfigured() {
-      if let stored = try? ASCCredentialStore.load() {
-        try? await AppStoreConnectClient.shared.configure(credentials: stored)
-      }
-    }
-
-    guard await AppStoreConnectClient.shared.isConfigured() else {
+    if let error = await configureASCClient(arguments: arguments) {
       return encodeJSON(ASCAddBuildToGroupResult(
         success: false,
         groupId: nil,
         buildId: nil,
-        error: "Not configured. Use asc_configure to set up credentials."
+        error: error
       ))
     }
 

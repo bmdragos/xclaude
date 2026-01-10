@@ -598,6 +598,11 @@ public actor AppStoreConnectClient {
     return response.data
   }
 
+  /// Delete a beta group
+  public func deleteBetaGroup(id: String) async throws {
+    try await delete("betaGroups/\(id)")
+  }
+
   /// Add a build to a beta group for distribution
   public func addBuildToGroup(groupId: String, buildId: String) async throws {
     let request = BetaGroupBuildAddRequest(buildIds: [buildId])
