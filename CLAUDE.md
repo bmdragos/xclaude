@@ -38,13 +38,16 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Status: v3.0.0 Released
+## Status: v3.7.0 Released
 
 - [x] Fork Swift Bundler
 - [x] Fix iOS app icons
 - [x] Implement signing discovery
 - [x] Create MCP server (31 tools, 61 capabilities)
 - [x] Mint distribution (`mint install bmdragos/xclaude`)
+- [x] Async-only builds (`build_start` + `build_status` + `build_logs`)
+- [x] Clean entitlements architecture (regenerated fresh per build)
+- [x] Multi-team signing support (team ID from certificate OU field)
 
 ## Key Files
 
@@ -85,8 +88,9 @@ Sources/XClaudeCore/
 ```
 
 ### Build Modes
-- **Sync** (`build` tool): `BuildRunner.build()` blocks until complete
-- **Async** (`build_start/status/logs/cancel`): `BuildManager` returns job ID immediately
+- **Async only** (`build_start/status/logs/cancel`): `BuildManager` returns job ID immediately
+- `build_status` returns `appPath` so you know where the built `.app` is located
+- Sync `build` tool was removed in v3.6.0 - async is better for Claude's workflow
 
 ### Post-Build Processing
 After successful builds, xclaude automatically:
@@ -121,22 +125,23 @@ let data = Data(contentsOf: tempFile)
 ### 4. Silent error handling
 Avoid `try?` that swallows errors. Prefer explicit handling or at minimum log failures.
 
-### 5. Platform-specific entitlements (CRITICAL)
-macOS App Sandbox entitlements (`com.apple.security.*`) are **invalid for iOS** and will cause signing failures:
-- "A valid provisioning profile was not found" during device install
-- Profile verification fails because iOS profiles don't allow these entitlements
+### 5. Entitlements architecture (v3.7.0+)
+`Entitlements.plist` is a **purely derived file** - regenerated fresh each build from `xclaude.toml`:
 
-**Solution**: `SigningDiscovery.generateEntitlements()` automatically strips these for non-macOS builds:
-```swift
-let macOSOnlyEntitlements = [
-  "com.apple.security.app-sandbox",
-  "com.apple.security.device.bluetooth",
-  "com.apple.security.network.client",
-  // ... see SigningDiscovery.swift for full list
-]
+```toml
+[capabilities]
+healthkit = true
+push-notifications = "development"
+app-groups = ["group.com.example.myapp"]
 ```
 
-**Common trap**: Adding `bluetooth` capability for iOS. On macOS it's an entitlement, on iOS it's an Info.plist key (`NSBluetoothAlwaysUsageDescription`).
+**How it works:**
+- `add_capability` writes to `xclaude.toml [capabilities]` section only
+- At build time, `generateEntitlements()` reads capabilities and generates platform-appropriate entitlements
+- macOS-only capabilities auto-filtered for iOS builds (and vice versa)
+- Correct `get-task-allow` variant per platform (iOS: `get-task-allow`, macOS: `com.apple.security.get-task-allow`)
+
+**No more cross-platform contamination** - each build starts fresh.
 
 ### 6. Capability platform differences
 Many capabilities work differently across platforms:
