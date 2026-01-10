@@ -1,0 +1,163 @@
+# xclaude Roadmap
+
+Feature ideas and implementation notes for future development.
+
+## High Priority
+
+### Device App Logs
+
+**Problem**: Can't see app logs from physical devices. `get_logs` only works for simulator.
+
+**Solution**: Use `idevicesyslog` from libimobiledevice to stream device logs.
+
+**Implementation**:
+```
+start_device_logs(bundle_id?)  → { session_id }
+get_device_logs(session_id)    → { lines: [...], buffered_remaining }
+stop_device_logs(session_id)   → { lines: [...] }
+```
+
+**Details**:
+- Dependency: `brew install libimobiledevice`
+- Filter by process name (derived from xclaude.toml `app.name`)
+- Command: `idevicesyslog -u <UDID> -p <ProcessName>`
+- Buffer output (cap at ~5000 lines like build logs)
+- Auto-detect: bundle_id from xclaude.toml, device from first connected
+
+**Challenges**:
+- Process name vs bundle ID (usually app.name matches process name)
+- Log volume can be high even when filtered
+- Need to start capture before/during app launch
+
+**Future**: Monitor `devicectl` for native log streaming support in future Xcode versions.
+
+---
+
+### Structured Build Errors
+
+**Problem**: Build failures dump raw log output. Have to hunt for actual errors.
+
+**Solution**: Parse compiler output into structured JSON with file/line/message.
+
+**Implementation**:
+- Parse swift build output for error patterns: `path/file.swift:42:15: error: message`
+- Return structured errors in build_status/build_logs when status=failed
+- Include warning count, error count, first N errors
+
+**Output format**:
+```json
+{
+  "status": "failed",
+  "errors": [
+    { "file": "ContentView.swift", "line": 42, "column": 15, "message": "...", "severity": "error" }
+  ],
+  "errorCount": 3,
+  "warningCount": 12
+}
+```
+
+---
+
+## Medium Priority
+
+### Pre-flight Signing Check
+
+**Problem**: Build succeeds but deploy fails due to signing issues (profile doesn't include device, cert expired, etc.). Wastes 30+ seconds on build.
+
+**Solution**: `preflight_signing()` tool that validates signing will work before building.
+
+**Checks**:
+1. Certificate exists and is valid (not expired)
+2. Provisioning profile exists and is valid
+3. Profile includes the certificate
+4. Profile includes the target device UDID
+5. Bundle ID matches profile's app ID
+
+**Output**:
+```json
+{
+  "valid": false,
+  "issues": [
+    { "severity": "error", "message": "Device 00008130-... not in provisioning profile", "fix": "Add device to Apple Developer Portal and regenerate profile" }
+  ]
+}
+```
+
+---
+
+### Build Progress
+
+**Problem**: During builds, only see line count. No sense of "50% done".
+
+**Solution**: Parse swift build output to extract progress.
+
+**Implementation**:
+- Swift outputs: `[15/47] Compiling MyApp ContentView.swift`
+- Parse current/total from build output
+- Add to build_status response: `"progress": { "current": 15, "total": 47, "phase": "compiling" }`
+
+**Phases**: resolving dependencies, compiling, linking, bundling, signing
+
+---
+
+## Nice to Have
+
+### Multi-device Deploy
+
+**Problem**: Testing on multiple devices requires running deploy multiple times.
+
+**Solution**: `deploy(targets: ["device1-udid", "device2-udid"])` deploys in parallel.
+
+**Implementation**:
+- Accept array of targets
+- Run deployments concurrently
+- Return results for each device
+
+---
+
+### Test on Device
+
+**Problem**: `test` tool only works on simulator.
+
+**Solution**: Add device testing support via `xcodebuild test -destination 'platform=iOS,id=<UDID>'`
+
+**Challenges**:
+- Needs signing for device
+- Test results parsing
+- May need different xcodebuild invocation than simulator
+
+---
+
+## Completed
+
+### v3.8.0
+- [x] Device-first defaults (build_start defaults to iOS, deploy defaults to device)
+- [x] Bundle ID auto-detection in deploy
+- [x] Clean build parameter
+- [x] Build logs buffer preservation
+
+### v3.7.0
+- [x] Clean entitlements architecture (regenerated fresh per build)
+- [x] Platform-aware capability filtering
+- [x] appPath in build_status
+
+### Earlier
+- [x] Async build system (build_start/status/logs/cancel)
+- [x] Signing discovery and auto-configuration
+- [x] Multi-team signing support
+- [x] Capability management (add/remove/list)
+- [x] 61 capabilities supported
+
+---
+
+## Ideas Backlog
+
+Things that might be useful but haven't been fully thought through:
+
+- **Watch mode for device** - rebuild and redeploy on file changes (currently only works for simulator)
+- **Crash symbolication** - get_crash_logs exists but doesn't symbolicate
+- **Build caching insights** - show what's being rebuilt vs cached
+- **Dependency vulnerability scanning** - check SPM dependencies for known issues
+- **Icon generation improvements** - more icon styles, gradients, SF Symbols
+- **SwiftUI preview support** - probably not possible without Xcode
+- **Performance profiling** - launch with Instruments templates
