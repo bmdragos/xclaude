@@ -571,7 +571,7 @@ public enum MCPTools {
     ),
     Tool(
       name: "upload",
-      description: "Upload an app to App Store Connect",
+      description: "Upload an app to App Store Connect. Auto-uses credentials from asc_configure if set, or provide them explicitly.",
       inputSchema: [
         "type": "object",
         "properties": [
@@ -581,15 +581,15 @@ public enum MCPTools {
           ],
           "api_key": [
             "type": "string",
-            "description": "Path to App Store Connect API key (.p8 file)"
+            "description": "Path to App Store Connect API key (.p8 file). Optional if asc_configure was used."
           ],
           "api_key_id": [
             "type": "string",
-            "description": "App Store Connect API Key ID"
+            "description": "App Store Connect API Key ID. Optional if asc_configure was used."
           ],
           "api_issuer": [
             "type": "string",
-            "description": "App Store Connect API Issuer ID"
+            "description": "App Store Connect API Issuer ID. Optional if asc_configure was used."
           ],
           "apple_id": [
             "type": "string",
