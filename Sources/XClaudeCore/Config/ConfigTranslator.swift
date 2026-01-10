@@ -174,7 +174,16 @@ public struct ConfigTranslator {
     // Collect all plist entries
     var plistLines: [String] = []
 
-    // Add Info.plist additions from capabilities (if present)
+    // Add Info.plist entries from xclaude.toml [info_plist] section
+    if let infoPlist = config.infoPlist, !infoPlist.isEmpty {
+      for (key, value) in infoPlist.sorted(by: { $0.key < $1.key }) {
+        let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
+          .replacingOccurrences(of: "\"", with: "\\\"")
+        plistLines.append("\"\(key)\" = \"\(escapedValue)\"")
+      }
+    }
+
+    // Also check InfoAdditions.plist for backward compatibility (capabilities may write here)
     let infoAdditionsPath = derivedDirectory(for: projectDirectory)
       .appendingPathComponent("InfoAdditions.plist")
     if FileManager.default.fileExists(atPath: infoAdditionsPath.path),
@@ -182,6 +191,8 @@ public struct ConfigTranslator {
        let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String],
        !plist.isEmpty {
       for (key, value) in plist.sorted(by: { $0.key < $1.key }) {
+        // Skip if already in config.infoPlist (config takes precedence)
+        if config.infoPlist?[key] != nil { continue }
         let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
           .replacingOccurrences(of: "\"", with: "\\\"")
         plistLines.append("\"\(key)\" = \"\(escapedValue)\"")

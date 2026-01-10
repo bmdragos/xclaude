@@ -5,10 +5,12 @@ import TOMLKit
 public struct XClaudeConfig: Codable {
   public var app: AppConfig
   public var signing: SigningConfig?
+  public var infoPlist: [String: String]?  // Custom Info.plist entries
 
-  public init(app: AppConfig, signing: SigningConfig? = nil) {
+  public init(app: AppConfig, signing: SigningConfig? = nil, infoPlist: [String: String]? = nil) {
     self.app = app
     self.signing = signing
+    self.infoPlist = infoPlist
   }
 
   /// Load config from xclaude.toml in a directory
@@ -94,7 +96,21 @@ public struct XClaudeConfig: Codable {
       )
     }
 
-    return XClaudeConfig(app: app, signing: signing)
+    // Parse [info_plist] section (optional)
+    var infoPlist: [String: String]? = nil
+    if let infoPlistTable = table["info_plist"]?.table {
+      var entries: [String: String] = [:]
+      for (key, value) in infoPlistTable {
+        if let strValue = value.string {
+          entries[key] = strValue
+        }
+      }
+      if !entries.isEmpty {
+        infoPlist = entries
+      }
+    }
+
+    return XClaudeConfig(app: app, signing: signing, infoPlist: infoPlist)
   }
 
   /// Save config to xclaude.toml
@@ -191,6 +207,16 @@ public struct XClaudeConfig: Codable {
       }
       if let profile = signing.profile {
         lines.append("profile = \"\(profile)\"")
+      }
+    }
+
+    if let infoPlist = infoPlist, !infoPlist.isEmpty {
+      lines.append("")
+      lines.append("[info_plist]")
+      for (key, value) in infoPlist.sorted(by: { $0.key < $1.key }) {
+        let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
+          .replacingOccurrences(of: "\"", with: "\\\"")
+        lines.append("\(key) = \"\(escapedValue)\"")
       }
     }
 

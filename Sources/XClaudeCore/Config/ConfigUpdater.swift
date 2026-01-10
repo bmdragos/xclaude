@@ -653,36 +653,32 @@ public struct CapabilityManager {
     let plistData = try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0)
     try plistData.write(to: entitlementsPath)
 
-    // Add Info.plist usage description if needed
-    var infoPlistAdditions: [String: Any] = [:]
-    let infoPlistPath = entitlementsDir.appendingPathComponent("InfoAdditions.plist")
-
-    // Load existing Info.plist additions if present
-    if FileManager.default.fileExists(atPath: infoPlistPath.path),
-       let data = try? Data(contentsOf: infoPlistPath),
-       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
-      infoPlistAdditions = plist
-    }
+    // Add Info.plist usage descriptions to xclaude.toml
+    var config = try XClaudeConfig.load(from: projectDirectory)
+    var infoPlistUpdates: [String: String] = [:]
 
     // Add usage description if this capability requires one
-    var needsSave = false
     if let usageKey = capability.usageDescriptionKey,
        let usageDesc = value ?? capability.defaultUsageDescription {
-      infoPlistAdditions[usageKey] = usageDesc
-      needsSave = true
+      infoPlistUpdates[usageKey] = usageDesc
     }
 
     // Add additional usage descriptions (e.g., HealthKit needs both read and write descriptions)
     if let additionalDescs = capability.additionalUsageDescriptions {
       for (key, defaultDesc) in additionalDescs {
-        infoPlistAdditions[key] = defaultDesc
+        infoPlistUpdates[key] = defaultDesc
       }
-      needsSave = true
     }
 
-    if needsSave {
-      let infoPlistData = try PropertyListSerialization.data(fromPropertyList: infoPlistAdditions, format: .xml, options: 0)
-      try infoPlistData.write(to: infoPlistPath)
+    // Update xclaude.toml's [info_plist] section
+    if !infoPlistUpdates.isEmpty {
+      if config.infoPlist == nil {
+        config.infoPlist = [:]
+      }
+      for (key, value) in infoPlistUpdates {
+        config.infoPlist?[key] = value
+      }
+      try config.save(to: projectDirectory)
     }
 
     // Build result dictionaries
