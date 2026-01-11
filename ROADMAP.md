@@ -10,27 +10,27 @@ Feature ideas and implementation notes for future development.
 
 **Issues to fix**:
 
-1. **Single signing config** - Only one `[signing.iOS]` section, manual editing to switch
-   - Add `[signing.iOS.development]` and `[signing.iOS.distribution]` sections
-   - `build_start` uses development, `archive` uses distribution automatically
+1. ~~**Single signing config** - Only one `[signing.iOS]` section, manual editing to switch~~ ✅
+   - ~~Add `[signing.iOS.development]` and `[signing.iOS.distribution]` sections~~
+   - ~~`build_start` uses development, `archive` uses distribution automatically~~
 
 2. ~~**Profile name collision** - ASC names ("Lode Bike Development") become just "Lode Bike" locally~~ ✅
    - ~~Match profiles by UUID instead of display name~~
    - ~~Or parse profile type from contents (development vs distribution)~~
    - Fixed: Filter by team ID first, then by profile type (development/appStore/adHoc)
 
-3. **Wrong entitlements for archive** - `get-task-allow = true` even with distribution profile
-   - `archive` must force `get-task-allow = false`
-   - Detect profile type and set entitlements accordingly
+3. ~~**Wrong entitlements for archive** - `get-task-allow = true` even with distribution profile~~ ✅
+   - ~~`archive` must force `get-task-allow = false`~~
+   - ~~Detect profile type and set entitlements accordingly~~
 
-4. **Missing Info.plist keys for App Store**:
-   - `DTPlatformName` - required
-   - `UIRequiredDeviceCapabilities` - should include `arm64`
-   - `DTSDKName`, `DTXcode`, `DTXcodeBuild` - nice to have
+4. ~~**Missing Info.plist keys for App Store**~~ ✅:
+   - ~~`DTPlatformName` - required~~
+   - ~~`UIRequiredDeviceCapabilities` - should include `arm64`~~
+   - ~~`DTSDKName`, `DTXcode`, `DTXcodeBuild` - nice to have~~
 
-5. **Upload ignores asc_configure** - Had to manually pass api_key params
-   - Auto-use stored credentials from `~/.xclaude/asc_credentials.json`
-   - Add `profile` parameter to `upload` tool
+5. ~~**Upload ignores asc_configure** - Had to manually pass api_key params~~ ✅
+   - ~~Auto-use stored credentials from `~/.xclaude/asc_credentials.json`~~
+   - ~~Add `profile` parameter to `upload` tool~~
 
 6. **Certificate naming** - API-created certs named "Created via API"
    - Pass proper common_name when creating CSR
@@ -168,6 +168,11 @@ stop_device_logs(session_id)   → { lines: [...] }
 ---
 
 ## Completed
+
+### v4.0.1
+- [x] `asc_add_internal_tester` tool - Add ASC users to internal TestFlight groups (bypasses Beta App Review)
+- [x] Auto-set `ITSAppUsesNonExemptEncryption=false` in archive (skips export compliance dialog)
+- [x] Upload tool prerequisite hint about manual app creation in ASC
 
 ### v4.0.0 (End-to-End Release)
 - [x] All v3.10.0 features
