@@ -1027,6 +1027,28 @@ public enum MCPTools {
       ]
     ),
     Tool(
+      name: "asc_add_internal_tester",
+      description: "Add an App Store Connect user to an internal TestFlight group. The user must already be an ASC team member (added via Users and Access). For external testers, use asc_add_tester instead.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "profile": [
+            "type": "string",
+            "description": "Credential profile to use (default: 'default')"
+          ],
+          "email": [
+            "type": "string",
+            "description": "ASC user's email address"
+          ],
+          "group_id": [
+            "type": "string",
+            "description": "Internal beta group ID to add the user to"
+          ]
+        ] as [String: Any],
+        "required": ["email", "group_id"] as [String]
+      ]
+    ),
+    Tool(
       name: "asc_remove_tester",
       description: "Remove a beta tester from TestFlight by email.",
       inputSchema: [
@@ -1367,6 +1389,8 @@ public enum MCPTools {
         return try await ascListTesters(arguments: arguments)
       case "asc_add_tester":
         return try await ascAddTester(arguments: arguments)
+      case "asc_add_internal_tester":
+        return try await ascAddInternalTester(arguments: arguments)
       case "asc_remove_tester":
         return try await ascRemoveTester(arguments: arguments)
       case "asc_list_groups":
@@ -6179,6 +6203,61 @@ public enum MCPTools {
         tester: nil,
         alreadyExists: nil,
         error: error.localizedDescription
+      ))
+    }
+  }
+
+  struct ASCAddInternalTesterResult: Codable {
+    let success: Bool
+    let message: String?
+    let testerId: String?
+    let groupId: String?
+    let error: String?
+  }
+
+  static func ascAddInternalTester(arguments: [String: Any]) async throws -> String {
+    guard let email = arguments["email"] as? String else {
+      throw ToolError.missingArgument("email")
+    }
+    guard let groupId = arguments["group_id"] as? String else {
+      throw ToolError.missingArgument("group_id")
+    }
+
+    if let error = await configureASCClient(arguments: arguments) {
+      return encodeJSON(ASCAddInternalTesterResult(
+        success: false, message: nil, testerId: nil, groupId: nil, error: error
+      ))
+    }
+
+    do {
+      // Find the beta tester record for this ASC user
+      guard let betaTester = try await AppStoreConnectClient.shared.findBetaTester(email: email) else {
+        return encodeJSON(ASCAddInternalTesterResult(
+          success: false,
+          message: nil,
+          testerId: nil,
+          groupId: nil,
+          error: "No beta tester found for \(email). Make sure they are an App Store Connect user first (Users and Access)."
+        ))
+      }
+
+      // Add the beta tester to the internal group
+      try await AppStoreConnectClient.shared.addTestersToGroup(groupId: groupId, testerIds: [betaTester.id])
+
+      return encodeJSON(ASCAddInternalTesterResult(
+        success: true,
+        message: "Added \(email) to internal testing group",
+        testerId: betaTester.id,
+        groupId: groupId,
+        error: nil
+      ))
+    } catch let error as AppStoreConnectClient.ASCError {
+      return encodeJSON(ASCAddInternalTesterResult(
+        success: false, message: nil, testerId: nil, groupId: nil, error: error.errorDescription
+      ))
+    } catch {
+      return encodeJSON(ASCAddInternalTesterResult(
+        success: false, message: nil, testerId: nil, groupId: nil, error: error.localizedDescription
       ))
     }
   }
