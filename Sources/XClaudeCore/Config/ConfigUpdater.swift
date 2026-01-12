@@ -190,6 +190,7 @@ public struct CapabilityManager {
     case usb = "usb"
     case printing = "print"
     case serialPort = "serial"
+    case musicLibrary = "music-library"
 
     // Notifications
     case criticalAlerts = "critical-alerts"
@@ -311,6 +312,8 @@ public struct CapabilityManager {
         return "com.apple.security.print"
       case .serialPort:
         return "com.apple.security.device.serial"
+      case .musicLibrary:
+        return "com.apple.security.assets.music.read-only"
       // Notifications
       case .criticalAlerts:
         return "com.apple.developer.usernotifications.critical-alerts"
@@ -399,7 +402,7 @@ public struct CapabilityManager {
       case .carPlay:
         return true
       // App Sandbox (macOS) - all boolean
-      case .networkClient, .networkServer, .bluetooth, .usb, .printing, .serialPort, .appSandbox:
+      case .networkClient, .networkServer, .bluetooth, .usb, .printing, .serialPort, .musicLibrary, .appSandbox:
         return true
       // Notifications - all boolean
       case .criticalAlerts, .timeSensitive, .communicationNotifications:
@@ -477,6 +480,7 @@ public struct CapabilityManager {
       case .usb: return "USB Device Access"
       case .printing: return "Printing"
       case .serialPort: return "Serial Port Access"
+      case .musicLibrary: return "Music Library Access (iTunes)"
       // Notifications
       case .criticalAlerts: return "Critical Alerts"
       case .timeSensitive: return "Time-Sensitive Notifications"
@@ -600,7 +604,7 @@ public struct CapabilityManager {
            .allowDyldEnv, .filesUserSelectedReadOnly, .filesUserSelectedReadWrite,
            .filesDownloads, .systemExtension,
            .networkClient, .networkServer, .usb, .printing, .serialPort,
-           .appSandbox:
+           .musicLibrary, .appSandbox:
         return .macOS
       }
     }
