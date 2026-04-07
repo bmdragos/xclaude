@@ -196,6 +196,11 @@ let package = Package(
       ]
     ),
 
+    .testTarget(
+      name: "XClaudeCoreTests",
+      dependencies: ["XClaudeCore"]
+    ),
+
     .plugin(
       name: "SwiftBundlerCommandPlugin",
       capability: .command(

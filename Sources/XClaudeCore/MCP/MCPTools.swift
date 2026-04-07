@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "4.0.0"
+  public static let version = "4.1.0"
 
   /// Tool definition
   struct Tool {
@@ -300,13 +300,14 @@ public enum MCPTools {
     ),
     Tool(
       name: "add_capability",
-      description: "Add an app capability (e.g. push-notifications, icloud, healthkit)",
+      description:
+        "Add an app capability (e.g. camera, push-notifications, healthkit). Updates xclaude.toml [capabilities] and [info_plist] sections; entitlements are generated per-platform at build time. Pass 'platform' to validate against a specific target and get a fixable error if the capability is unsupported there. Call list_capabilities first to see per-platform emission details.",
       inputSchema: [
         "type": "object",
         "properties": [
           "capability": [
             "type": "string",
-            "description": "Capability name (e.g. 'push-notifications', 'icloud', 'app-groups')"
+            "description": "Capability name (e.g. 'camera', 'push-notifications', 'healthkit')"
           ],
           "path": [
             "type": "string",
@@ -314,7 +315,13 @@ public enum MCPTools {
           ],
           "value": [
             "type": "string",
-            "description": "Custom entitlement value (optional)"
+            "description":
+              "Custom value. For permission capabilities (camera, location, photos, etc.) this becomes the Info.plist usage description text. For entitlement-valued capabilities (push-notifications) it becomes the entitlement value."
+          ],
+          "platform": [
+            "type": "string",
+            "description":
+              "Target platform to validate against ('iOS' or 'macOS'). Optional — if provided and the capability isn't supported on that platform, the tool returns a fixable error."
           ]
         ] as [String: Any],
         "required": ["capability"] as [String]
@@ -340,7 +347,8 @@ public enum MCPTools {
     ),
     Tool(
       name: "list_capabilities",
-      description: "List all available app capabilities",
+      description:
+        "List every known capability with per-platform details. Each entry returns the capability name, display name, summary, supported platforms, and a `platforms` dictionary showing exactly which entitlements and Info.plist keys get emitted on iOS vs macOS (including sandbox requirements and notes). Use this to introspect what a capability will do before calling add_capability.",
       inputSchema: [
         "type": "object",
         "properties": [:] as [String: Any],
@@ -1438,7 +1446,7 @@ public enum MCPTools {
       processStartTime: formatter.string(from: processStartTime),
       processId: ProcessInfo.processInfo.processIdentifier,
       swiftVersion: "5.9+",
-      capabilities: CapabilityManager.Capability.allCases.count
+      capabilities: CapabilityRegistry.allNames.count
     )
     return encodeJSON(info)
   }
@@ -2282,8 +2290,14 @@ public enum MCPTools {
     let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
     let projectURL = URL(fileURLWithPath: pathStr)
     let value = arguments["value"] as? String
+    let targetPlatform = (arguments["platform"] as? String).map { CapabilityPlatform.parse($0) }
 
-    let result = try CapabilityManager.addCapability(capability, to: projectURL, value: value)
+    let result = try CapabilityManager.addCapability(
+      capability,
+      to: projectURL,
+      value: value,
+      targetPlatform: targetPlatform
+    )
     return encodeJSON(result)
   }
 

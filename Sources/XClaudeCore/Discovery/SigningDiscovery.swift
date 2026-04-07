@@ -532,26 +532,32 @@ extension SigningDiscovery {
     entitlements["get-task-allow"] = true  // Required for development signing
     entitlements["keychain-access-groups"] = [appIdentifier]
 
-    // Add entitlements from capabilities in xclaude.toml
+    // Add entitlements from capabilities in xclaude.toml using the manifest
+    // registry. Each capability asks its manifest "what entitlements do you
+    // need on THIS platform?" — capabilities that produce no entitlements on
+    // the target platform (e.g. camera on iOS, which is Info.plist-only) are
+    // skipped, which is the critical fix for the long-standing "camera breaks
+    // iOS provisioning profile" bug.
     if let capabilities = config?.capabilities {
-      // Map capability names to entitlement keys using CapabilityManager.Capability
+      let targetPlatform: CapabilityPlatform = isMacOS ? .macOS : .iOS
       for (capName, capValue) in capabilities {
-        guard let capability = CapabilityManager.Capability(rawValue: capName) else {
+        guard let manifest = CapabilityRegistry.manifest(for: capName) else {
           continue  // Skip unknown capabilities
         }
-
-        // Skip platform-incompatible capabilities
-        switch capability.platform {
-        case .macOS where !isMacOS:
-          continue  // Skip macOS-only capabilities on iOS
-        case .iOS where isMacOS:
-          continue  // Skip iOS-only capabilities on macOS
-        default:
-          break  // .both capabilities are always included
+        // Skip capabilities not supported on this platform entirely.
+        guard manifest.supports(targetPlatform) else {
+          continue
         }
-
-        // Add entitlement with user-provided value or default
-        entitlements[capability.entitlementKey] = capValue.anyValue
+        // Emit whatever entitlements the manifest declares for this platform.
+        // Empty = Info.plist-only on this platform (correct for iOS camera,
+        // bluetooth, location, photos, contacts, calendars, audio-input).
+        let resolved = manifest.resolvedEntitlements(
+          for: targetPlatform,
+          userValue: capValue
+        )
+        for (key, value) in resolved {
+          entitlements[key] = value
+        }
       }
     }
 

@@ -22,7 +22,7 @@ public struct XClaudeConfig: Codable {
 }
 
 /// Capability value - can be bool, string, or string array
-public enum CapabilityValue: Codable, Equatable {
+public enum CapabilityValue: Codable, Equatable, Sendable {
   case bool(Bool)
   case string(String)
   case array([String])
