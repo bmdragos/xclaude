@@ -4468,10 +4468,23 @@ public enum MCPTools {
       createdFiles.append(filePath.path)
     }
 
-    // Update Package.swift to add extension target
+    // Update Package.swift to add extension target.
+    //
+    // This needs to find the TOP-LEVEL `targets: [` array in the `Package(...)`
+    // initializer, NOT the `targets: [...]` string array that appears inside
+    // `.executable(name:targets:)`. The previous implementation used
+    // `range(of:options:.regularExpression)`, which returns the FIRST match —
+    // which in a standard xclaude-generated Package.swift is the string array
+    // inside `.executable(...)`. That silently corrupted projects by injecting
+    // an `.executableTarget(...)` declaration into what's actually a `[String]`
+    // parameter, producing invalid Swift that died at manifest parse time.
+    //
+    // Strategy: find ALL occurrences of `targets:\s*\[` and use the LAST one.
+    // In any well-formed Package.swift the top-level `targets:` array comes
+    // after `products:` (which contains the string-array uses), so the last
+    // match is always the top-level target list.
     let packagePath = projectURL.appendingPathComponent("Package.swift")
     if var packageContent = try? String(contentsOf: packagePath, encoding: .utf8) {
-      // Add extension target
       let extensionTarget = """
           .executableTarget(
             name: "\(extensionName)",
@@ -4479,9 +4492,14 @@ public enum MCPTools {
           ),
       """
 
-      // Find targets array and add extension
-      if let targetsRange = packageContent.range(of: "targets:\\s*\\[", options: .regularExpression) {
-        let insertPoint = packageContent.index(after: packageContent.range(of: "[", range: targetsRange)!.lowerBound)
+      if let regex = try? NSRegularExpression(pattern: "targets:\\s*\\["),
+         let lastMatch = regex.matches(
+           in: packageContent,
+           range: NSRange(packageContent.startIndex..., in: packageContent)
+         ).last,
+         let matchRange = Range(lastMatch.range, in: packageContent),
+         let openBracket = packageContent[matchRange].firstIndex(of: "[") {
+        let insertPoint = packageContent.index(after: openBracket)
         packageContent.insert(contentsOf: "\n    \(extensionTarget)", at: insertPoint)
         try? packageContent.write(to: packagePath, atomically: true, encoding: .utf8)
       }
