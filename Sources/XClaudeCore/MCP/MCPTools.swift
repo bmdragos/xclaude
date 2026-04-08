@@ -678,18 +678,32 @@ public enum MCPTools {
     ),
     Tool(
       name: "add_extension",
-      description: "Add an app extension (widget, share, etc.)",
+      description:
+        "Add an app extension (widget, share, intents, etc.) to the project. Updates xclaude.toml's [extensions.<name>] section, generates the extension's Swift source file, and inserts a matching target + product into Package.swift so the extension gets built. At build time, xclaude produces a .appex bundle embedded in the parent app's PlugIns/ directory with per-extension Info.plist and entitlements. For widgets that host ActivityKit Live Activities, set live_activities=true to automatically add NSSupportsLiveActivities to the parent app's Info.plist.",
       inputSchema: [
         "type": "object",
         "properties": [
           "type": [
             "type": "string",
             "description": "Extension type",
-            "enum": ["widget", "share", "action", "today", "intents", "notification-content", "notification-service"]
+            "enum": [
+              "widget", "share", "action", "intents",
+              "notification-content", "notification-service",
+            ]
           ],
           "name": [
             "type": "string",
-            "description": "Extension name (default: derived from type)"
+            "description": "Extension target name (default: derived from type, e.g. 'MyAppWidget')"
+          ],
+          "bundle_id": [
+            "type": "string",
+            "description":
+              "Custom bundle identifier for the extension. Defaults to '<app.bundle_id>.<extensionName>'."
+          ],
+          "live_activities": [
+            "type": "boolean",
+            "description":
+              "Widgets only. If true, adds NSSupportsLiveActivities=YES to the parent app's Info.plist, enabling ActivityKit Live Activities / Dynamic Island."
           ],
           "path": [
             "type": "string",
@@ -1695,6 +1709,29 @@ public enum MCPTools {
       platform: platform,
       signing: signing
     )
+
+    // Embed app extensions (widgets, share, intents, etc.) by building each
+    // declared extension target, wrapping it as a .appex bundle, dropping it
+    // into the parent app's PlugIns/ directory, and re-signing. Swift-bundler
+    // knows nothing about extensions — this post-processing step is what
+    // makes them work. Runs after asset catalog compilation so the parent
+    // app's Info.plist is finalized before we re-sign the parent bundle.
+    let configValue = BuildRunner.Configuration(rawValue: job.configuration) ?? .debug
+    do {
+      try await ExtensionEmbedder.embedExtensions(
+        appPath: appURL.path,
+        projectDirectory: projectURL,
+        platform: platform,
+        configuration: configValue
+      )
+    } catch {
+      // Surface extension embedding failures via stderr (visible in MCP
+      // server logs). Silent fallthrough would leave users with a
+      // "successful" build that's missing their widget.
+      FileHandle.standardError.write(
+        "xclaude: extension embedding failed: \(error)\n".data(using: .utf8) ?? Data()
+      )
+    }
   }
 
   static func buildStart(arguments: [String: Any]) async throws -> String {
@@ -4399,7 +4436,7 @@ public enum MCPTools {
   // MARK: - App Extension
 
   static func addExtension(arguments: [String: Any]) async throws -> String {
-    guard let extensionType = arguments["type"] as? String else {
+    guard let extensionTypeName = arguments["type"] as? String else {
       return encodeJSON(ExtensionResult(
         success: false,
         message: "Extension type is required",
@@ -4407,119 +4444,221 @@ public enum MCPTools {
       ))
     }
 
+    // Validate against the registry.
+    guard let extensionType = ExtensionType(rawValue: extensionTypeName),
+          let manifest = ExtensionRegistry.manifest(for: extensionType) else {
+      let valid = ExtensionRegistry.allNames.joined(separator: ", ")
+      return encodeJSON(ExtensionResult(
+        success: false,
+        message:
+          "Unknown extension type '\(extensionTypeName)'. Valid options: \(valid)",
+        files: []
+      ))
+    }
+
     let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
     let projectURL = URL(fileURLWithPath: pathStr)
 
-    // Get app name and bundle ID
-    let config = try? XClaudeConfig.load(from: projectURL)
-    let appName = config?.app.name ?? projectURL.lastPathComponent
-    let bundleId = config?.app.bundleId ?? "com.example.\(appName.lowercased())"
+    // Load config (required — we write to [extensions] section).
+    var config: XClaudeConfig
+    do {
+      config = try XClaudeConfig.load(from: projectURL)
+    } catch {
+      return encodeJSON(ExtensionResult(
+        success: false,
+        message: "Failed to load xclaude.toml: \(error). Run init_project first.",
+        files: []
+      ))
+    }
+    let appName = config.app.name
+    let appBundleId = config.app.bundleId
 
-    // Derive extension name
+    // Derive extension name.
     let extensionName = arguments["name"] as? String ?? {
       switch extensionType {
-      case "widget": return "\(appName)Widget"
-      case "share": return "\(appName)Share"
-      case "action": return "\(appName)Action"
-      case "today": return "\(appName)Today"
-      case "intents": return "\(appName)Intents"
-      case "notification-content": return "\(appName)NotificationContent"
-      case "notification-service": return "\(appName)NotificationService"
-      default: return "\(appName)Extension"
+      case .widget: return "\(appName)Widget"
+      case .share: return "\(appName)Share"
+      case .action: return "\(appName)Action"
+      case .intents: return "\(appName)Intents"
+      case .notificationContent: return "\(appName)NotificationContent"
+      case .notificationService: return "\(appName)NotificationService"
       }
     }()
 
-    let extensionBundleId = "\(bundleId).\(extensionName)"
+    // Resolve bundle ID: explicit override, else <app>.<extension>.
+    let customBundleId = arguments["bundle_id"] as? String
+    let extensionBundleId = customBundleId ?? "\(appBundleId).\(extensionName)"
 
-    // Create extension directory
+    // Live activities flag (widgets only).
+    let liveActivities: Bool? = {
+      guard let flag = arguments["live_activities"] as? Bool else { return nil }
+      if extensionType != .widget {
+        // Flag is meaningless for non-widget types; ignore silently.
+        return nil
+      }
+      return flag
+    }()
+
+    // Check for name collision.
+    if config.extensions?[extensionName] != nil {
+      return encodeJSON(ExtensionResult(
+        success: false,
+        message:
+          "Extension '\(extensionName)' already exists in xclaude.toml. Use a different name.",
+        files: []
+      ))
+    }
+
+    // Create extension source directory.
     let extensionDir = projectURL
       .appendingPathComponent("Sources")
       .appendingPathComponent(extensionName)
+    try? FileManager.default.createDirectory(
+      at: extensionDir, withIntermediateDirectories: true
+    )
 
-    try? FileManager.default.createDirectory(at: extensionDir, withIntermediateDirectories: true)
-
+    // Generate extension Swift source file.
     var createdFiles: [String] = []
-
-    // Generate extension-specific code
+    let sourceFile: URL
     switch extensionType {
-    case "widget":
-      let widgetCode = generateWidgetCode(extensionName: extensionName, appName: appName)
-      let filePath = extensionDir.appendingPathComponent("\(extensionName).swift")
-      try widgetCode.write(to: filePath, atomically: true, encoding: .utf8)
-      createdFiles.append(filePath.path)
+    case .widget:
+      sourceFile = extensionDir.appendingPathComponent("\(extensionName).swift")
+      try generateWidgetCode(
+        extensionName: extensionName,
+        appName: appName,
+        liveActivities: liveActivities ?? false
+      ).write(to: sourceFile, atomically: true, encoding: .utf8)
+    case .share:
+      sourceFile = extensionDir.appendingPathComponent("ShareViewController.swift")
+      try generateShareExtensionCode(extensionName: extensionName)
+        .write(to: sourceFile, atomically: true, encoding: .utf8)
+    case .intents:
+      sourceFile = extensionDir.appendingPathComponent("IntentHandler.swift")
+      try generateIntentsCode(extensionName: extensionName)
+        .write(to: sourceFile, atomically: true, encoding: .utf8)
+    case .action, .notificationContent, .notificationService:
+      sourceFile = extensionDir.appendingPathComponent("\(extensionName).swift")
+      try generateGenericExtensionCode(
+        extensionName: extensionName,
+        extensionType: extensionTypeName
+      ).write(to: sourceFile, atomically: true, encoding: .utf8)
+    }
+    createdFiles.append(sourceFile.path)
 
-    case "share":
-      let shareCode = generateShareExtensionCode(extensionName: extensionName)
-      let filePath = extensionDir.appendingPathComponent("ShareViewController.swift")
-      try shareCode.write(to: filePath, atomically: true, encoding: .utf8)
-      createdFiles.append(filePath.path)
+    // Write to xclaude.toml [extensions.<name>] section.
+    let extConfig = ExtensionConfig(
+      type: extensionType.rawValue,
+      bundleId: customBundleId,
+      infoPlist: nil,
+      capabilities: nil,
+      liveActivities: liveActivities
+    )
+    if config.extensions == nil {
+      config.extensions = [:]
+    }
+    config.extensions?[extensionName] = extConfig
 
-    case "intents":
-      let intentsCode = generateIntentsCode(extensionName: extensionName)
-      let filePath = extensionDir.appendingPathComponent("IntentHandler.swift")
-      try intentsCode.write(to: filePath, atomically: true, encoding: .utf8)
-      createdFiles.append(filePath.path)
-
-    default:
-      // Generic extension template
-      let genericCode = generateGenericExtensionCode(extensionName: extensionName, extensionType: extensionType)
-      let filePath = extensionDir.appendingPathComponent("\(extensionName).swift")
-      try genericCode.write(to: filePath, atomically: true, encoding: .utf8)
-      createdFiles.append(filePath.path)
+    // Widgets with Live Activities also need NSSupportsLiveActivities in the
+    // PARENT app's Info.plist. Merge that in.
+    let spec = manifest.resolvedSpec(liveActivities: liveActivities ?? false)
+    var parentPlistAdded: [String: String] = [:]
+    if !spec.parentAppInfoPlist.isEmpty {
+      if config.infoPlist == nil {
+        config.infoPlist = [:]
+      }
+      for (key, value) in spec.parentAppInfoPlist where config.infoPlist?[key] == nil {
+        config.infoPlist?[key] = value
+        parentPlistAdded[key] = value
+      }
     }
 
-    // Update Package.swift to add extension target.
-    //
-    // This needs to find the TOP-LEVEL `targets: [` array in the `Package(...)`
-    // initializer, NOT the `targets: [...]` string array that appears inside
-    // `.executable(name:targets:)`. The previous implementation used
-    // `range(of:options:.regularExpression)`, which returns the FIRST match —
-    // which in a standard xclaude-generated Package.swift is the string array
-    // inside `.executable(...)`. That silently corrupted projects by injecting
-    // an `.executableTarget(...)` declaration into what's actually a `[String]`
-    // parameter, producing invalid Swift that died at manifest parse time.
-    //
-    // Strategy: find ALL occurrences of `targets:\s*\[` and use the LAST one.
-    // In any well-formed Package.swift the top-level `targets:` array comes
-    // after `products:` (which contains the string-array uses), so the last
-    // match is always the top-level target list.
+    try config.save(to: projectURL)
+
+    // Update Package.swift to add the extension target AND a matching
+    // `.executable` product. The product is necessary because xcodebuild
+    // generates one scheme per product, and swift-bundler builds via
+    // `xcodebuild -scheme <name>`; a target with no product is invisible
+    // to the scheme generator and silently ignored. Adding the product
+    // gives the extension its own auto-generated scheme so the bundler
+    // can build it.
     let packagePath = projectURL.appendingPathComponent("Package.swift")
     if var packageContent = try? String(contentsOf: packagePath, encoding: .utf8) {
-      let extensionTarget = """
-          .executableTarget(
-            name: "\(extensionName)",
-            path: "Sources/\(extensionName)"
-          ),
-      """
+      let extensionTargetDecl = """
+            .executableTarget(
+              name: "\(extensionName)",
+              path: "Sources/\(extensionName)"
+            ),
+        """
 
-      if let regex = try? NSRegularExpression(pattern: "targets:\\s*\\["),
-         let lastMatch = regex.matches(
+      // Insert the target at the END of the top-level `targets:` array.
+      // Use NSRegularExpression.matches to find all `targets:\s*\[` and
+      // take the LAST one (the top-level targets: always comes after
+      // products:, which contains string-array uses).
+      if let targetsRegex = try? NSRegularExpression(pattern: "targets:\\s*\\["),
+         let lastMatch = targetsRegex.matches(
            in: packageContent,
            range: NSRange(packageContent.startIndex..., in: packageContent)
          ).last,
          let matchRange = Range(lastMatch.range, in: packageContent),
          let openBracket = packageContent[matchRange].firstIndex(of: "[") {
         let insertPoint = packageContent.index(after: openBracket)
-        packageContent.insert(contentsOf: "\n    \(extensionTarget)", at: insertPoint)
-        try? packageContent.write(to: packagePath, atomically: true, encoding: .utf8)
+        packageContent.insert(contentsOf: "\n\(extensionTargetDecl)", at: insertPoint)
       }
+
+      // Insert a matching `.executable` product into the `products:` array.
+      // Same strategy: find the products: array and insert at the top.
+      let productDecl = """
+            .executable(name: "\(extensionName)", targets: ["\(extensionName)"]),
+        """
+      if let productsRegex = try? NSRegularExpression(pattern: "products:\\s*\\["),
+         let productsMatch = productsRegex.matches(
+           in: packageContent,
+           range: NSRange(packageContent.startIndex..., in: packageContent)
+         ).first,
+         let matchRange = Range(productsMatch.range, in: packageContent),
+         let openBracket = packageContent[matchRange].firstIndex(of: "[") {
+        let insertPoint = packageContent.index(after: openBracket)
+        packageContent.insert(contentsOf: "\n\(productDecl)", at: insertPoint)
+      }
+
+      try? packageContent.write(to: packagePath, atomically: true, encoding: .utf8)
+    }
+
+    // Build a user-friendly message.
+    var messageParts = ["Created \(manifest.type.displayName) '\(extensionName)'"]
+    if liveActivities == true {
+      messageParts.append("with Live Activities enabled")
+    }
+    if !parentPlistAdded.isEmpty {
+      messageParts.append(
+        "(added \(parentPlistAdded.keys.sorted().joined(separator: ", ")) to parent app Info.plist)"
+      )
     }
 
     return encodeJSON(ExtensionResult(
       success: true,
-      message: "Created \(extensionType) extension '\(extensionName)'",
+      message: messageParts.joined(separator: " "),
       files: createdFiles,
       extensionName: extensionName,
       extensionBundleId: extensionBundleId,
-      extensionType: extensionType
+      extensionType: extensionType.rawValue
     ))
   }
 
-  private static func generateWidgetCode(extensionName: String, appName: String) -> String {
-    return """
-    import WidgetKit
-    import SwiftUI
+  private static func generateWidgetCode(
+    extensionName: String,
+    appName: String,
+    liveActivities: Bool
+  ) -> String {
+    // Base WidgetKit imports and static widget. When live activities are
+    // enabled we also import ActivityKit and emit an ActivityAttributes
+    // type + an ActivityConfiguration widget alongside the static one.
+    var imports = "import WidgetKit\nimport SwiftUI"
+    if liveActivities {
+      imports += "\nimport ActivityKit"
+    }
 
+    let staticWidget = """
     struct \(extensionName)Entry: TimelineEntry {
       let date: Date
       let message: String
@@ -4556,8 +4695,7 @@ public enum MCPTools {
       }
     }
 
-    @main
-    struct \(extensionName): Widget {
+    struct \(extensionName)StaticWidget: Widget {
       let kind: String = "\(extensionName)"
 
       var body: some WidgetConfiguration {
@@ -4567,6 +4705,85 @@ public enum MCPTools {
         .configurationDisplayName("\(appName) Widget")
         .description("A widget for \(appName).")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+      }
+    }
+    """
+
+    if !liveActivities {
+      // Non-Live-Activity widget: make the static widget the `@main` entry.
+      return """
+      \(imports)
+
+      \(staticWidget.replacingOccurrences(
+        of: "struct \(extensionName)StaticWidget: Widget",
+        with: "@main\nstruct \(extensionName): Widget"
+      ))
+      """
+    }
+
+    // Live Activity widget: define ActivityAttributes, an ActivityConfiguration,
+    // and a WidgetBundle that exposes both the static widget and the Live
+    // Activity as the @main entry.
+    return """
+    \(imports)
+
+    // MARK: - Activity Attributes
+    //
+    // Static attributes are set at Activity.request time and never change.
+    // Dynamic content (ContentState) updates as the activity progresses.
+    struct \(extensionName)Attributes: ActivityAttributes {
+      public struct ContentState: Codable, Hashable {
+        public var message: String
+        public var progress: Double
+      }
+
+      public var title: String
+    }
+
+    // MARK: - Live Activity UI
+    struct \(extensionName)LiveActivity: Widget {
+      var body: some WidgetConfiguration {
+        ActivityConfiguration(for: \(extensionName)Attributes.self) { context in
+          // Lock screen / banner view
+          VStack(alignment: .leading) {
+            Text(context.attributes.title).font(.headline)
+            Text(context.state.message).font(.subheadline)
+            ProgressView(value: context.state.progress)
+          }
+          .padding()
+          .activityBackgroundTint(Color.clear)
+          .activitySystemActionForegroundColor(Color.primary)
+        } dynamicIsland: { context in
+          DynamicIsland {
+            DynamicIslandExpandedRegion(.leading) {
+              Text(context.attributes.title)
+            }
+            DynamicIslandExpandedRegion(.trailing) {
+              Text("\\(Int(context.state.progress * 100))%")
+            }
+            DynamicIslandExpandedRegion(.bottom) {
+              ProgressView(value: context.state.progress)
+            }
+          } compactLeading: {
+            Text(context.attributes.title.prefix(1))
+          } compactTrailing: {
+            Text("\\(Int(context.state.progress * 100))%")
+          } minimal: {
+            Text("\\(Int(context.state.progress * 100))")
+          }
+        }
+      }
+    }
+
+    // MARK: - Static Widget
+    \(staticWidget)
+
+    // MARK: - Widget Bundle Entry Point
+    @main
+    struct \(extensionName)Bundle: WidgetBundle {
+      var body: some Widget {
+        \(extensionName)StaticWidget()
+        \(extensionName)LiveActivity()
       }
     }
     """

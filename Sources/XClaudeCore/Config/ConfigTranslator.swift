@@ -294,6 +294,199 @@ public struct ConfigTranslator {
     return lines.joined(separator: "\n") + "\n"
   }
 
+  // MARK: - Extension derived files
+
+  /// Directory holding all per-extension derived files.
+  public static func extensionsDerivedDirectory(for project: URL) -> URL {
+    derivedDirectory(for: project).appendingPathComponent("extensions")
+  }
+
+  /// Per-extension derived directory (contains Info.plist + Entitlements.plist).
+  public static func extensionDerivedDirectory(
+    for project: URL,
+    extensionName: String
+  ) -> URL {
+    extensionsDerivedDirectory(for: project).appendingPathComponent(extensionName)
+  }
+
+  /// Generate per-extension `Info.plist` and `Entitlements.plist` files into
+  /// `.xclaude/derived/extensions/<name>/` for every extension declared in
+  /// `xclaude.toml`'s `[extensions]` section.
+  ///
+  /// Consumed by xclaude's own post-build step (see `ExtensionEmbedder`) —
+  /// not by SwiftBundler. This keeps the SwiftBundler fork untouched while
+  /// still letting xclaude emit a fully-signed `.app` with embedded `.appex`
+  /// bundles.
+  ///
+  /// Returns the list of extension names that were processed.
+  @discardableResult
+  public static func generateExtensionDerivedFiles(
+    config: XClaudeConfig,
+    projectDirectory: URL
+  ) throws -> [String] {
+    guard let extensions = config.extensions, !extensions.isEmpty else {
+      return []
+    }
+
+    let baseDir = extensionsDerivedDirectory(for: projectDirectory)
+    try FileManager.default.createDirectory(
+      at: baseDir, withIntermediateDirectories: true
+    )
+
+    var processed: [String] = []
+    for (extName, extConfig) in extensions.sorted(by: { $0.key < $1.key }) {
+      guard let manifest = ExtensionRegistry.manifest(forName: extConfig.type) else {
+        // Unknown extension type — `add_extension` should have validated
+        // this at declaration time, so just skip rather than error out.
+        continue
+      }
+
+      let extDir = extensionDerivedDirectory(
+        for: projectDirectory,
+        extensionName: extName
+      )
+      try FileManager.default.createDirectory(
+        at: extDir, withIntermediateDirectories: true
+      )
+
+      let bundleId = extConfig.bundleId ?? "\(config.app.bundleId).\(extName)"
+      let spec = manifest.resolvedSpec(liveActivities: extConfig.liveActivities ?? false)
+
+      // Info.plist
+      let infoPlist = buildExtensionInfoPlist(
+        extensionName: extName,
+        bundleId: bundleId,
+        version: config.app.version,
+        manifest: manifest,
+        spec: spec,
+        userOverrides: extConfig.infoPlist
+      )
+      let infoPlistURL = extDir.appendingPathComponent("Info.plist")
+      let infoPlistData = try PropertyListSerialization.data(
+        fromPropertyList: infoPlist, format: .xml, options: 0
+      )
+      try infoPlistData.write(to: infoPlistURL)
+
+      // Entitlements.plist
+      let entitlements = buildExtensionEntitlements(
+        extConfig: extConfig,
+        bundleId: bundleId,
+        manifest: manifest,
+        spec: spec
+      )
+      let entitlementsURL = extDir.appendingPathComponent("Entitlements.plist")
+      let entitlementsData = try PropertyListSerialization.data(
+        fromPropertyList: entitlements, format: .xml, options: 0
+      )
+      try entitlementsData.write(to: entitlementsURL)
+
+      processed.append(extName)
+    }
+    return processed
+  }
+
+  /// Build the `Info.plist` contents for a single extension, as a dictionary
+  /// ready for `PropertyListSerialization`.
+  private static func buildExtensionInfoPlist(
+    extensionName: String,
+    bundleId: String,
+    version: String,
+    manifest: ExtensionManifest,
+    spec: ExtensionPlatformSpec,
+    userOverrides: [String: String]?
+  ) -> [String: Any] {
+    // Standard bundle keys every app extension needs.
+    var plist: [String: Any] = [
+      "CFBundleDevelopmentRegion": "en",
+      "CFBundleDisplayName": extensionName,
+      "CFBundleExecutable": extensionName,
+      "CFBundleIdentifier": bundleId,
+      "CFBundleInfoDictionaryVersion": "6.0",
+      "CFBundleName": extensionName,
+      // App extensions declare themselves via CFBundlePackageType = XPC!
+      "CFBundlePackageType": "XPC!",
+      "CFBundleShortVersionString": version,
+      "CFBundleVersion": "1",
+      // TODO: derive MinimumOSVersion from Package.swift platforms; for now
+      // use iOS 17 which matches xclaude's default SwiftUI template.
+      "MinimumOSVersion": "17.0",
+    ]
+
+    // NSExtension dict — extensionPointIdentifier is always required; the
+    // principal class is optional (widgets use @main and have no principal).
+    var nsExtension: [String: Any] = [
+      "NSExtensionPointIdentifier": manifest.type.extensionPointIdentifier
+    ]
+    if let principalClass = manifest.type.principalClass {
+      // $(PRODUCT_MODULE_NAME) gets substituted by codesign/runtime to the
+      // extension target's module name.
+      nsExtension["NSExtensionPrincipalClass"] = "$(PRODUCT_MODULE_NAME).\(principalClass)"
+    }
+    plist["NSExtension"] = nsExtension
+
+    // Merge in any top-level Info.plist keys from the manifest spec.
+    // (Currently unused — extension-point identifiers live in NSExtension.)
+    for (key, value) in spec.infoPlist {
+      plist[key] = value.anyValue
+    }
+
+    // User overrides from [extensions.<name>.info_plist] take final precedence.
+    if let overrides = userOverrides {
+      for (key, value) in overrides {
+        plist[key] = value
+      }
+    }
+
+    return plist
+  }
+
+  /// Build the `Entitlements.plist` contents for a single extension.
+  ///
+  /// Extensions get their own entitlements file because a widget extension
+  /// may need to declare different capabilities than its parent app (e.g.,
+  /// `com.apple.security.application-groups` to share storage with the app).
+  private static func buildExtensionEntitlements(
+    extConfig: ExtensionConfig,
+    bundleId: String,
+    manifest: ExtensionManifest,
+    spec: ExtensionPlatformSpec
+  ) -> [String: Any] {
+    var entitlements: [String: Any] = [:]
+
+    // Baseline keys every signed extension needs.
+    // `application-identifier` is normally TEAM_ID.bundle_id but on simulator
+    // (ad-hoc signing) we write just the bundle id; codesign doesn't require
+    // the team prefix for ad-hoc signed extensions.
+    entitlements["application-identifier"] = bundleId
+
+    // Manifest-declared entitlements for this extension type.
+    for (key, value) in spec.entitlements {
+      entitlements[key] = value.anyValue
+    }
+
+    // User-declared per-extension capabilities via [extensions.<name>.capabilities].
+    // Reuse the CapabilityRegistry to resolve them identically to the main app.
+    if let capabilities = extConfig.capabilities {
+      for (capName, capValue) in capabilities {
+        guard let capManifest = CapabilityRegistry.manifest(for: capName) else {
+          continue
+        }
+        // Extensions on Darwin are currently only supported for iOS — use
+        // the iOS platform spec from the capability manifest. Future: pass
+        // through the actual target platform.
+        let resolved = capManifest.resolvedEntitlements(
+          for: .iOS,
+          userValue: capValue
+        )
+        for (key, value) in resolved {
+          entitlements[key] = value
+        }
+      }
+    }
+
+    return entitlements
+  }
+
   /// Check if project has xclaude.toml
   public static func hasXClaudeConfig(at directory: URL) -> Bool {
     let configPath = directory.appendingPathComponent("xclaude.toml")

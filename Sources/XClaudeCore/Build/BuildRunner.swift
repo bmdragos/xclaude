@@ -279,6 +279,42 @@ public struct BuildRunner {
           platform: platform,
           signing: resolvedSigning
         )
+
+        // Embed app extensions (widgets, share, intents, etc.) by building
+        // each declared extension target, wrapping it as a .appex bundle,
+        // dropping it into the parent app's PlugIns/ directory, and
+        // re-signing. Swift-bundler knows nothing about extensions — this
+        // post-processing step is what makes them work.
+        do {
+          try await ExtensionEmbedder.embedExtensions(
+            appPath: appPath,
+            projectDirectory: projectDirectory,
+            platform: platform,
+            configuration: configuration
+          )
+        } catch {
+          // Extension embedding failures should surface loudly — silent
+          // fallthrough would leave users with a "successful" build that's
+          // missing their widget.
+          return BuildResult(
+            success: false,
+            appPath: appPath,
+            platform: platform.rawValue,
+            configuration: configuration.rawValue,
+            duration: Date().timeIntervalSince(startTime),
+            warnings: warnings,
+            errors: errors + [BuildError(
+              code: "EXTENSION_EMBED_FAILED",
+              message: "Failed to embed app extensions: \(error)",
+              suggestion:
+                "Check that each extension target in xclaude.toml has a "
+                + "matching .executableTarget in Package.swift and that "
+                + "its Swift code compiles.",
+              fixable: true
+            )],
+            signing: nil
+          )
+        }
       }
     }
 

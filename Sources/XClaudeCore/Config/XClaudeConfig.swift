@@ -7,17 +7,62 @@ public struct XClaudeConfig: Codable {
   public var signing: SigningConfig?
   public var capabilities: [String: CapabilityValue]?  // Capability name -> value
   public var infoPlist: [String: String]?  // Custom Info.plist entries
+  public var extensions: [String: ExtensionConfig]?  // Extension name -> config
 
   public init(
     app: AppConfig,
     signing: SigningConfig? = nil,
     capabilities: [String: CapabilityValue]? = nil,
-    infoPlist: [String: String]? = nil
+    infoPlist: [String: String]? = nil,
+    extensions: [String: ExtensionConfig]? = nil
   ) {
     self.app = app
     self.signing = signing
     self.capabilities = capabilities
     self.infoPlist = infoPlist
+    self.extensions = extensions
+  }
+}
+
+/// Per-extension configuration, keyed by the extension's target name in
+/// xclaude.toml's `[extensions.<name>]` section.
+///
+/// The `type` field is required (and maps to `ExtensionType`). Everything
+/// else is optional override — defaults come from `ExtensionRegistry` at
+/// build time.
+public struct ExtensionConfig: Codable, Equatable, Sendable {
+  /// Extension type: "widget", "share", "action", "intents",
+  /// "notification-content", or "notification-service".
+  public var type: String
+
+  /// Bundle identifier for the extension. Defaults to
+  /// `<app.bundle_id>.<extensionName>` if unset.
+  public var bundleId: String?
+
+  /// Extension-specific Info.plist overrides. Merged over the manifest defaults.
+  public var infoPlist: [String: String]?
+
+  /// Extension-specific capabilities. Keyed the same way as the top-level
+  /// `[capabilities]` section. Used to generate a per-extension
+  /// Entitlements.plist.
+  public var capabilities: [String: CapabilityValue]?
+
+  /// Widget extensions only: if true, add `NSSupportsLiveActivities = YES`
+  /// to the PARENT app's Info.plist, enabling ActivityKit.
+  public var liveActivities: Bool?
+
+  public init(
+    type: String,
+    bundleId: String? = nil,
+    infoPlist: [String: String]? = nil,
+    capabilities: [String: CapabilityValue]? = nil,
+    liveActivities: Bool? = nil
+  ) {
+    self.type = type
+    self.bundleId = bundleId
+    self.infoPlist = infoPlist
+    self.capabilities = capabilities
+    self.liveActivities = liveActivities
   }
 }
 
@@ -211,7 +256,79 @@ extension XClaudeConfig {
       }
     }
 
-    return XClaudeConfig(app: app, signing: signing, capabilities: capabilities, infoPlist: infoPlist)
+    // Parse [extensions.<name>] sections (optional).
+    //
+    // Each extension appears as a sub-table under [extensions]. The `type`
+    // field is required; everything else is optional override. Sub-tables
+    // like [extensions.<name>.info_plist] and [extensions.<name>.capabilities]
+    // are parsed recursively.
+    var extensions: [String: ExtensionConfig]? = nil
+    if let extensionsTable = table["extensions"]?.table {
+      var exts: [String: ExtensionConfig] = [:]
+      for (extName, extValue) in extensionsTable {
+        guard let extTable = extValue.table else { continue }
+        guard let extType = extTable["type"]?.string else {
+          // type is required; skip extensions without one (lenient parse)
+          continue
+        }
+        let extBundleId = extTable["bundle_id"]?.string
+        let liveActivities = extTable["live_activities"]?.bool
+
+        // Parse per-extension [extensions.<name>.info_plist]
+        var extInfoPlist: [String: String]? = nil
+        if let extPlistTable = extTable["info_plist"]?.table {
+          var entries: [String: String] = [:]
+          for (key, value) in extPlistTable {
+            if let strValue = value.string {
+              entries[key] = strValue
+            }
+          }
+          if !entries.isEmpty {
+            extInfoPlist = entries
+          }
+        }
+
+        // Parse per-extension [extensions.<name>.capabilities]
+        var extCapabilities: [String: CapabilityValue]? = nil
+        if let extCapsTable = extTable["capabilities"]?.table {
+          var caps: [String: CapabilityValue] = [:]
+          for (key, value) in extCapsTable {
+            if let boolValue = value.bool {
+              caps[key] = .bool(boolValue)
+            } else if let strValue = value.string {
+              caps[key] = .string(strValue)
+            } else if let arrValue = value.array {
+              let strings = arrValue.compactMap { $0.string }
+              if !strings.isEmpty {
+                caps[key] = .array(strings)
+              }
+            }
+          }
+          if !caps.isEmpty {
+            extCapabilities = caps
+          }
+        }
+
+        exts[extName] = ExtensionConfig(
+          type: extType,
+          bundleId: extBundleId,
+          infoPlist: extInfoPlist,
+          capabilities: extCapabilities,
+          liveActivities: liveActivities
+        )
+      }
+      if !exts.isEmpty {
+        extensions = exts
+      }
+    }
+
+    return XClaudeConfig(
+      app: app,
+      signing: signing,
+      capabilities: capabilities,
+      infoPlist: infoPlist,
+      extensions: extensions
+    )
   }
 
   /// Save config to xclaude.toml
@@ -391,6 +508,50 @@ extension XClaudeConfig {
         let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
           .replacingOccurrences(of: "\"", with: "\\\"")
         lines.append("\(key) = \"\(escapedValue)\"")
+      }
+    }
+
+    // Output [extensions.<name>] sub-tables
+    if let extensions = extensions, !extensions.isEmpty {
+      for (extName, extConfig) in extensions.sorted(by: { $0.key < $1.key }) {
+        lines.append("")
+        lines.append("[extensions.\(extName)]")
+        lines.append("type = \"\(extConfig.type)\"")
+        if let bundleId = extConfig.bundleId {
+          lines.append("bundle_id = \"\(bundleId)\"")
+        }
+        if let liveActivities = extConfig.liveActivities {
+          lines.append("live_activities = \(liveActivities)")
+        }
+
+        // Per-extension [info_plist] overrides
+        if let extInfoPlist = extConfig.infoPlist, !extInfoPlist.isEmpty {
+          lines.append("")
+          lines.append("[extensions.\(extName).info_plist]")
+          for (key, value) in extInfoPlist.sorted(by: { $0.key < $1.key }) {
+            let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
+              .replacingOccurrences(of: "\"", with: "\\\"")
+            lines.append("\(key) = \"\(escapedValue)\"")
+          }
+        }
+
+        // Per-extension capabilities
+        if let extCaps = extConfig.capabilities, !extCaps.isEmpty {
+          lines.append("")
+          lines.append("[extensions.\(extName).capabilities]")
+          for (key, value) in extCaps.sorted(by: { $0.key < $1.key }) {
+            switch value {
+            case .bool(let b):
+              lines.append("\(key) = \(b)")
+            case .string(let s):
+              let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+              lines.append("\(key) = \"\(escaped)\"")
+            case .array(let arr):
+              lines.append("\(key) = [\(formatArray(arr))]")
+            }
+          }
+        }
       }
     }
 
