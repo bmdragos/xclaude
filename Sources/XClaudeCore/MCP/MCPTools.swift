@@ -714,6 +714,40 @@ public enum MCPTools {
       ]
     ),
     Tool(
+      name: "remove_extension",
+      description:
+        "Remove an app extension from the project. Deletes the [extensions.<name>] section from xclaude.toml, removes the corresponding .executable product and .executableTarget from Package.swift, and cleans up .xclaude/derived/extensions/<name>/. The source directory under Sources/<name>/ is preserved by default — pass delete_source=true to also remove it.",
+      inputSchema: [
+        "type": "object",
+        "properties": [
+          "name": [
+            "type": "string",
+            "description": "Extension target name to remove (as it appears in xclaude.toml)"
+          ],
+          "path": [
+            "type": "string",
+            "description": "Path to the project directory"
+          ],
+          "delete_source": [
+            "type": "boolean",
+            "description":
+              "If true, also delete Sources/<name>/. Default: false (source files are preserved so you can review or restore them)."
+          ]
+        ] as [String: Any],
+        "required": ["name"] as [String]
+      ]
+    ),
+    Tool(
+      name: "list_extensions",
+      description:
+        "List every known app extension type with per-type details — NSExtensionPointIdentifier, principal class, summary, and notes. Use this to see what extension types xclaude understands before calling add_extension.",
+      inputSchema: [
+        "type": "object",
+        "properties": [:] as [String: Any],
+        "required": [] as [String]
+      ]
+    ),
+    Tool(
       name: "generate_api_client",
       description: "Generate API client code from OpenAPI/Swagger spec",
       inputSchema: [
@@ -1381,6 +1415,10 @@ public enum MCPTools {
         return try await addModel(arguments: arguments)
       case "add_extension":
         return try await addExtension(arguments: arguments)
+      case "remove_extension":
+        return try await removeExtension(arguments: arguments)
+      case "list_extensions":
+        return listExtensions()
       case "generate_api_client":
         return try await generateAPIClient(arguments: arguments)
       case "asc_configure":
@@ -1660,35 +1698,32 @@ public enum MCPTools {
 
   // MARK: - Async Build Tools
 
-  /// Track jobs that have been post-processed (asset catalog compiled)
-  private static var postProcessedJobs: Set<String> = []
-  private static let postProcessLock = NSLock()
-
-  /// Post-process a completed build (compile asset catalog, re-sign)
-  private static func postProcessBuild(job: BuildJob) async {
-    // Check if already processed
-    postProcessLock.lock()
-    if postProcessedJobs.contains(job.id) {
-      postProcessLock.unlock()
-      return
-    }
-    postProcessedJobs.insert(job.id)
-    postProcessLock.unlock()
-
-    // Only process successful builds
-    guard job.status == .success else { return }
-
+  /// Run post-build steps (asset catalog compilation + extension embedding)
+  /// as the `BuildJob.postProcessHandler`. Called from the job's own post-
+  /// process task when `swift-bundler` exits successfully. Throws if any
+  /// step fails — the error gets recorded in `BuildJob.postProcessError`
+  /// and the job's status transitions to `.failed`.
+  static func runPostBuild(job: BuildJob) async throws {
     let projectURL = URL(fileURLWithPath: job.projectPath)
-    guard let platform = BuildRunner.Platform(rawValue: job.platform) else { return }
-
-    // Find the built app
-    let buildDir = projectURL.appendingPathComponent(".build/bundler")
-    guard let contents = try? FileManager.default.contentsOfDirectory(at: buildDir, includingPropertiesForKeys: nil),
-          let appURL = contents.first(where: { $0.pathExtension == "app" }) else {
-      return
+    guard let platform = BuildRunner.Platform(rawValue: job.platform) else {
+      throw PostBuildError(message: "Unknown platform: \(job.platform)")
     }
 
-    // Resolve signing info if needed
+    // Find the built app.
+    let buildDir = projectURL.appendingPathComponent(".build/bundler")
+    guard
+      let contents = try? FileManager.default.contentsOfDirectory(
+        at: buildDir,
+        includingPropertiesForKeys: nil
+      ),
+      let appURL = contents.first(where: { $0.pathExtension == "app" })
+    else {
+      throw PostBuildError(
+        message: "Could not locate built .app in \(buildDir.path)"
+      )
+    }
+
+    // Resolve signing info if required (device builds).
     var signing: SigningDiscovery.ResolvedSigning? = nil
     if platform.requiresSigning {
       let config = try? XClaudeConfig.load(from: projectURL)
@@ -1702,7 +1737,9 @@ public enum MCPTools {
       )
     }
 
-    // Compile asset catalog
+    // 1. Asset catalog (fixes app icon with swift-bundler). Keep as
+    //    best-effort `try?` — this has always been soft-fail and isn't
+    //    worth failing a whole build over.
     try? await BuildRunner.compileAssetCatalog(
       appPath: appURL.path,
       projectDirectory: projectURL,
@@ -1710,28 +1747,28 @@ public enum MCPTools {
       signing: signing
     )
 
-    // Embed app extensions (widgets, share, intents, etc.) by building each
-    // declared extension target, wrapping it as a .appex bundle, dropping it
-    // into the parent app's PlugIns/ directory, and re-signing. Swift-bundler
-    // knows nothing about extensions — this post-processing step is what
-    // makes them work. Runs after asset catalog compilation so the parent
-    // app's Info.plist is finalized before we re-sign the parent bundle.
+    // 2. Embed declared app extensions (widgets, share, intents, etc.).
+    //    Failures here are hard failures — a build that "succeeds" without
+    //    the widget the user declared is the worst kind of silent breakage.
+    //    On device builds we pass the resolved parent signing so each
+    //    extension can resolve its own provisioning profile and sign with
+    //    the real identity. On simulator `signing` is nil and everything
+    //    falls back to ad-hoc.
     let configValue = BuildRunner.Configuration(rawValue: job.configuration) ?? .debug
-    do {
-      try await ExtensionEmbedder.embedExtensions(
-        appPath: appURL.path,
-        projectDirectory: projectURL,
-        platform: platform,
-        configuration: configValue
-      )
-    } catch {
-      // Surface extension embedding failures via stderr (visible in MCP
-      // server logs). Silent fallthrough would leave users with a
-      // "successful" build that's missing their widget.
-      FileHandle.standardError.write(
-        "xclaude: extension embedding failed: \(error)\n".data(using: .utf8) ?? Data()
-      )
-    }
+    try await ExtensionEmbedder.embedExtensions(
+      appPath: appURL.path,
+      projectDirectory: projectURL,
+      platform: platform,
+      configuration: configValue,
+      parentSigning: signing
+    )
+  }
+
+  /// Simple error type for post-build failures that need a human-readable
+  /// message.
+  struct PostBuildError: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
   }
 
   static func buildStart(arguments: [String: Any]) async throws -> String {
@@ -1829,13 +1866,21 @@ public enum MCPTools {
       }
     }
 
-    // Start the build
+    // Start the build.
+    //
+    // Pass a post-process handler that runs asset catalog compilation and
+    // extension embedding after swift-bundler exits. The job stays in
+    // `.postProcessing` state until the handler finishes, so clients polling
+    // `build_status` see `.success` only when the bundle is fully ready.
     let job = try await BuildManager.shared.startBuild(
       projectPath: pathStr,
       platform: platformStr,
       configuration: configStr,
       arguments: args,
-      swiftBundlerPath: bundlerPath
+      swiftBundlerPath: bundlerPath,
+      postProcessHandler: { job in
+        try await MCPTools.runPostBuild(job: job)
+      }
     )
 
     // Set expected app path based on project config
@@ -1857,22 +1902,18 @@ public enum MCPTools {
   }
 
   static func buildStatus(arguments: [String: Any]) async throws -> String {
+    // Post-processing now happens as part of the job lifecycle (driven by
+    // BuildJob's post-process task), so buildStatus is a pure read — no
+    // inline work. A job with status .postProcessing is still running its
+    // post-build steps (asset catalog / extension embedding) and transitions
+    // to .success or .failed automatically.
     if let jobId = arguments["job_id"] as? String {
       guard let job = await BuildManager.shared.getJob(jobId) else {
         return encodeJSON(BuildErrorResult(success: false, error: "Job not found: \(jobId)"))
       }
-      // Post-process if build just succeeded
-      if job.status == .success {
-        await postProcessBuild(job: job)
-      }
       return encodeJSON(BuildJobInfo(from: job))
     } else {
-      // Return all recent jobs
       let jobs = await BuildManager.shared.recentJobs()
-      // Post-process any successful builds
-      for job in jobs where job.status == .success {
-        await postProcessBuild(job: job)
-      }
       let infos = jobs.map { BuildJobInfo(from: $0) }
       return encodeJSON(BuildJobsResult(jobs: infos))
     }
@@ -2113,18 +2154,24 @@ public enum MCPTools {
       }
     }
 
-    // Start async build (non-blocking)
+    // Start async build (non-blocking). Pass the same post-process handler
+    // the buildStart path uses so extension embedding runs as part of the
+    // job lifecycle.
     let job = try await BuildManager.shared.startBuild(
       projectPath: pathStr,
       platform: platformStr,
       configuration: configStr,
       arguments: args,
-      swiftBundlerPath: bundlerPath
+      swiftBundlerPath: bundlerPath,
+      postProcessHandler: { job in
+        try await MCPTools.runPostBuild(job: job)
+      }
     )
 
-    // Poll for completion (check every 500ms)
-    while job.status == .running {
-      try await Task.sleep(nanoseconds: 500_000_000) // 500ms
+    // Poll for completion — include `.postProcessing` as a still-in-flight
+    // state so we wait for extension embedding to finish before deploying.
+    while job.status == .running || job.status == .postProcessing {
+      try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
     }
 
     // Build completed - get result
@@ -2165,8 +2212,9 @@ public enum MCPTools {
       ))
     }
 
-    // Post-process (compile asset catalog, etc.)
-    await postProcessBuild(job: job)
+    // Post-processing already ran as part of the job lifecycle (see
+    // postProcessHandler passed to startBuild above) — by the time we get
+    // here the .app is fully bundled with any declared extensions embedded.
 
     // Get bundle ID from config
     let config = try? XClaudeConfig.load(from: projectURL)
@@ -2570,7 +2618,7 @@ public enum MCPTools {
     let allOutput = stdout + "\n" + stderr
     var passed = 0
     var failed = 0
-    var skipped = 0
+    let skipped = 0
     var failures: [TestFailure] = []
 
     for line in allOutput.split(separator: "\n") {
@@ -2824,7 +2872,6 @@ public enum MCPTools {
     #if canImport(AppKit)
     // Generate icon using CoreGraphics
     let size = 1024
-    let scale: CGFloat = 1.0
 
     guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
           let context = CGContext(
@@ -2842,8 +2889,6 @@ public enum MCPTools {
         message: "Failed to create graphics context"
       ))
     }
-
-    let rect = CGRect(x: 0, y: 0, width: size, height: size)
 
     // Draw gradient background
     let startColor = primaryColor
@@ -3312,7 +3357,7 @@ public enum MCPTools {
     }
 
     let appName = config.app.name
-    let bundleId = config.app.bundleId ?? "com.example.\(appName)"
+    let bundleId = config.app.bundleId
 
     // Step 1: Build in release mode for iOS
     let buildResult = try await BuildRunner.build(
@@ -3511,51 +3556,53 @@ public enum MCPTools {
     // Add required Info.plist keys for App Store submission
     let infoPlistPath = appURL.appendingPathComponent("Info.plist").path
     if FileManager.default.fileExists(atPath: infoPlistPath) {
-      // Get Xcode/SDK info
-      let xcodeVersion = (try? runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output)?
+      // Get Xcode/SDK info. runCommandSync returns a non-optional (exit, output)
+      // tuple, so the optional chaining that used to be here (wrapping a now-
+      // removed `try?`) is gone.
+      let xcodeVersion = runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output
         .components(separatedBy: "\n").first?
         .replacingOccurrences(of: "Xcode ", with: "") ?? "16.0"
-      let xcodeBuild = (try? runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output)?
+      let xcodeBuild = runCommandSync("/usr/bin/xcodebuild", arguments: ["-version"]).output
         .components(separatedBy: "\n").dropFirst().first?
         .replacingOccurrences(of: "Build version ", with: "") ?? "16A242d"
-      let sdkVersion = (try? runCommandSync("/usr/bin/xcrun", arguments: ["--show-sdk-version", "--sdk", "iphoneos"]).output)?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "18.0"
+      let sdkVersion = runCommandSync("/usr/bin/xcrun", arguments: ["--show-sdk-version", "--sdk", "iphoneos"]).output
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 
       // Add DTPlatformName
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :DTPlatformName string iphoneos", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :DTPlatformName iphoneos", infoPlistPath])
 
       // Add DTSDKName
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :DTSDKName string iphoneos\(sdkVersion)", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :DTSDKName iphoneos\(sdkVersion)", infoPlistPath])
 
       // Add DTPlatformVersion
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :DTPlatformVersion string \(sdkVersion)", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :DTPlatformVersion \(sdkVersion)", infoPlistPath])
 
       // Add DTXcode
       let dtXcode = xcodeVersion.replacingOccurrences(of: ".", with: "").padding(toLength: 4, withPad: "0", startingAt: 0)
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :DTXcode string \(dtXcode)", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :DTXcode \(dtXcode)", infoPlistPath])
 
       // Add DTXcodeBuild
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :DTXcodeBuild string \(xcodeBuild)", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :DTXcodeBuild \(xcodeBuild)", infoPlistPath])
 
       // Add UIRequiredDeviceCapabilities with arm64
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :UIRequiredDeviceCapabilities array", infoPlistPath])
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Add :UIRequiredDeviceCapabilities:0 string arm64", infoPlistPath])
 
       // Add ITSAppUsesNonExemptEncryption = false to skip export compliance dialog
@@ -3563,9 +3610,9 @@ public enum MCPTools {
       // Can be overridden in xclaude.toml [info_plist] if app uses custom encryption
       let hasExplicitEncryptionKey = config.infoPlist?["ITSAppUsesNonExemptEncryption"] != nil
       if !hasExplicitEncryptionKey {
-        _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        _ = runCommandSync("/usr/libexec/PlistBuddy",
           arguments: ["-c", "Add :ITSAppUsesNonExemptEncryption bool false", infoPlistPath])
-        _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+        _ = runCommandSync("/usr/libexec/PlistBuddy",
           arguments: ["-c", "Set :ITSAppUsesNonExemptEncryption false", infoPlistPath])
       }
     }
@@ -3580,10 +3627,10 @@ public enum MCPTools {
       try? FileManager.default.copyItem(atPath: devEntitlementsPath, toPath: distEntitlementsPath)
 
       // Set get-task-allow to false for distribution
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :get-task-allow false", distEntitlementsPath])
       // Also check for the macOS variant key
-      _ = try? runCommandSync("/usr/libexec/PlistBuddy",
+      _ = runCommandSync("/usr/libexec/PlistBuddy",
         arguments: ["-c", "Set :com.apple.security.get-task-allow false", distEntitlementsPath])
     } else {
       // Create minimal distribution entitlements
@@ -4624,6 +4671,36 @@ public enum MCPTools {
       try? packageContent.write(to: packagePath, atomically: true, encoding: .utf8)
     }
 
+    // For widgets with Live Activities enabled, generate a helper file in
+    // the main app's Sources/ directory that shows how to start/update/end
+    // an activity. Without this, users land in the "I have a Live Activity
+    // widget but no idea how to trigger it" trap.
+    //
+    // The helper intentionally duplicates the `ActivityAttributes` struct
+    // rather than sharing it via a library target — that keeps the wiring
+    // simple for the dev loop. For production, users should extract the
+    // attributes into a shared library target (a comment in the generated
+    // file explains this).
+    if liveActivities == true {
+      let mainAppSources = projectURL
+        .appendingPathComponent("Sources")
+        .appendingPathComponent(appName)
+      if FileManager.default.fileExists(atPath: mainAppSources.path) {
+        let helperPath = mainAppSources
+          .appendingPathComponent("\(extensionName)ActivityController.swift")
+        // Only write if the file doesn't already exist — don't clobber
+        // user customizations on re-run.
+        if !FileManager.default.fileExists(atPath: helperPath.path) {
+          let helperCode = generateLiveActivityControllerCode(
+            extensionName: extensionName,
+            appName: appName
+          )
+          try helperCode.write(to: helperPath, atomically: true, encoding: .utf8)
+          createdFiles.append(helperPath.path)
+        }
+      }
+    }
+
     // Build a user-friendly message.
     var messageParts = ["Created \(manifest.type.displayName) '\(extensionName)'"]
     if liveActivities == true {
@@ -4643,6 +4720,321 @@ public enum MCPTools {
       extensionBundleId: extensionBundleId,
       extensionType: extensionType.rawValue
     ))
+  }
+
+  // MARK: - remove_extension
+
+  static func removeExtension(arguments: [String: Any]) async throws -> String {
+    guard let name = arguments["name"] as? String else {
+      return encodeJSON(RemoveExtensionResult(
+        success: false,
+        message: "Extension name is required",
+        extensionName: "",
+        removedFromConfig: false,
+        removedFromPackageSwift: false,
+        removedDerivedFiles: false,
+        deletedSourceDirectory: false
+      ))
+    }
+
+    let pathStr = arguments["path"] as? String ?? FileManager.default.currentDirectoryPath
+    let projectURL = URL(fileURLWithPath: pathStr)
+    let deleteSource = arguments["delete_source"] as? Bool ?? false
+
+    // Load config.
+    var config: XClaudeConfig
+    do {
+      config = try XClaudeConfig.load(from: projectURL)
+    } catch {
+      return encodeJSON(RemoveExtensionResult(
+        success: false,
+        message: "Failed to load xclaude.toml: \(error)",
+        extensionName: name,
+        removedFromConfig: false,
+        removedFromPackageSwift: false,
+        removedDerivedFiles: false,
+        deletedSourceDirectory: false
+      ))
+    }
+
+    guard config.extensions?[name] != nil else {
+      return encodeJSON(RemoveExtensionResult(
+        success: false,
+        message: "No extension named '\(name)' in xclaude.toml",
+        extensionName: name,
+        removedFromConfig: false,
+        removedFromPackageSwift: false,
+        removedDerivedFiles: false,
+        deletedSourceDirectory: false
+      ))
+    }
+
+    // 1. Remove from [extensions] section.
+    config.extensions?.removeValue(forKey: name)
+    if config.extensions?.isEmpty == true {
+      config.extensions = nil
+    }
+
+    // 2. If no remaining widget has live_activities, strip
+    //    NSSupportsLiveActivities from the parent Info.plist.
+    let anyWidgetStillLiveActivity =
+      config.extensions?.values.contains {
+        $0.type == "widget" && ($0.liveActivities ?? false)
+      } ?? false
+    if !anyWidgetStillLiveActivity {
+      config.infoPlist?.removeValue(forKey: "NSSupportsLiveActivities")
+      if config.infoPlist?.isEmpty == true {
+        config.infoPlist = nil
+      }
+    }
+
+    try config.save(to: projectURL)
+
+    // 3. Edit Package.swift — remove the .executable product AND the
+    //    .executableTarget that add_extension inserted. Both use regex
+    //    patterns that match the shape add_extension writes; if the user
+    //    hand-edited Package.swift with different formatting, the regex may
+    //    not match and we leave them to clean up manually.
+    var removedFromPackageSwift = false
+    let packagePath = projectURL.appendingPathComponent("Package.swift")
+    if var content = try? String(contentsOf: packagePath, encoding: .utf8) {
+      let original = content
+
+      // Remove `.executable(name: "<name>", targets: ["<name>"]),`
+      // (with optional trailing newline + indent).
+      let productPattern =
+        #"\s*\.executable\(name:\s*"\#(name)",\s*targets:\s*\["\#(name)"\]\),?"#
+      if let regex = try? NSRegularExpression(pattern: productPattern) {
+        let range = NSRange(content.startIndex..., in: content)
+        content = regex.stringByReplacingMatches(
+          in: content, range: range, withTemplate: ""
+        )
+      }
+
+      // Remove the `.executableTarget(name: "<name>", path: "Sources/<name>")`
+      // block. Multiline — use `(?s)` to make `.` match newlines.
+      let targetPattern =
+        #"(?s)\s*\.executableTarget\(\s*name:\s*"\#(name)",\s*path:\s*"Sources/\#(name)"\s*\),?"#
+      if let regex = try? NSRegularExpression(pattern: targetPattern) {
+        let range = NSRange(content.startIndex..., in: content)
+        content = regex.stringByReplacingMatches(
+          in: content, range: range, withTemplate: ""
+        )
+      }
+
+      if content != original {
+        try? content.write(to: packagePath, atomically: true, encoding: .utf8)
+        removedFromPackageSwift = true
+      }
+    }
+
+    // 4. Delete derived files at .xclaude/derived/extensions/<name>/.
+    var removedDerivedFiles = false
+    let derivedDir = ConfigTranslator.extensionDerivedDirectory(
+      for: projectURL,
+      extensionName: name
+    )
+    if FileManager.default.fileExists(atPath: derivedDir.path) {
+      try? FileManager.default.removeItem(at: derivedDir)
+      removedDerivedFiles = true
+    }
+
+    // 5. Optionally delete source directory.
+    var deletedSourceDirectory = false
+    if deleteSource {
+      let sourceDir = projectURL
+        .appendingPathComponent("Sources")
+        .appendingPathComponent(name)
+      if FileManager.default.fileExists(atPath: sourceDir.path) {
+        try? FileManager.default.removeItem(at: sourceDir)
+        deletedSourceDirectory = true
+      }
+    }
+
+    var messageParts = ["Removed extension '\(name)'"]
+    if !removedFromPackageSwift {
+      messageParts.append(
+        "(note: Package.swift entries not matched — you may need to remove the .executable product and .executableTarget manually)"
+      )
+    }
+
+    return encodeJSON(RemoveExtensionResult(
+      success: true,
+      message: messageParts.joined(separator: " "),
+      extensionName: name,
+      removedFromConfig: true,
+      removedFromPackageSwift: removedFromPackageSwift,
+      removedDerivedFiles: removedDerivedFiles,
+      deletedSourceDirectory: deletedSourceDirectory
+    ))
+  }
+
+  struct RemoveExtensionResult: Codable {
+    let success: Bool
+    let message: String
+    let extensionName: String
+    let removedFromConfig: Bool
+    let removedFromPackageSwift: Bool
+    let removedDerivedFiles: Bool
+    let deletedSourceDirectory: Bool
+  }
+
+  // MARK: - list_extensions
+
+  static func listExtensions() -> String {
+    var result: [String: ExtensionTypeInfo] = [:]
+    for type in ExtensionType.allCases {
+      guard let manifest = ExtensionRegistry.manifest(for: type) else { continue }
+      result[type.rawValue] = ExtensionTypeInfo(
+        name: type.rawValue,
+        displayName: type.displayName,
+        summary: type.summary,
+        extensionPointIdentifier: type.extensionPointIdentifier,
+        principalClass: type.principalClass,
+        notes: manifest.baseSpec.notes
+      )
+    }
+    return encodeJSON(result)
+  }
+
+  struct ExtensionTypeInfo: Codable {
+    let name: String
+    let displayName: String
+    let summary: String
+    let extensionPointIdentifier: String
+    let principalClass: String?
+    let notes: String?
+  }
+
+  /// Generate a helper file that lives in the MAIN app's Sources/ directory
+  /// and shows how to start/update/end a Live Activity from application
+  /// code. Without this, users who set `live_activities = true` get a
+  /// widget with the UI but no example of how to trigger an activity.
+  ///
+  /// The `ActivityAttributes` struct is intentionally duplicated from the
+  /// widget's copy (they live in different SPM targets, so sharing requires
+  /// a third library target). For production the user should extract it —
+  /// there's a comment in the generated file explaining that.
+  private static func generateLiveActivityControllerCode(
+    extensionName: String,
+    appName: String
+  ) -> String {
+    return """
+    import Foundation
+    import ActivityKit
+
+    // MARK: - Shared types
+    //
+    // This `ActivityAttributes` type MUST match the one defined in
+    // `Sources/\(extensionName)/\(extensionName).swift`. Live Activities span
+    // two SPM targets (the main app and the widget extension), and the
+    // simplest way to get correct behavior in a dev loop is to keep the
+    // struct duplicated in both places and edit them together.
+    //
+    // For production, extract this struct into a shared library target
+    // and have both the main app target and the widget extension target
+    // depend on it. See Apple's ActivityKit documentation for the full
+    // layout.
+
+    struct \(extensionName)Attributes: ActivityAttributes {
+      public struct ContentState: Codable, Hashable {
+        public var message: String
+        public var progress: Double
+      }
+      public var title: String
+    }
+
+    // MARK: - Activity controller
+    //
+    // A simple wrapper around ActivityKit's Activity<Attrs> API. Call
+    // `start(title:message:progress:)` to request an activity, `update(...)`
+    // to push state changes, and `end()` when you're done.
+
+    @MainActor
+    final class \(extensionName)ActivityController {
+      static let shared = \(extensionName)ActivityController()
+
+      private var activity: Activity<\(extensionName)Attributes>?
+
+      /// Request a new Live Activity. Throws if ActivityKit isn't available
+      /// (e.g., user has Live Activities disabled in Settings) or if a
+      /// system limit is hit.
+      func start(title: String, message: String, progress: Double) throws {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+          throw NSError(
+            domain: "\(appName)",
+            code: 1,
+            userInfo: [
+              NSLocalizedDescriptionKey:
+                "Live Activities are disabled in Settings > \(appName)"
+            ]
+          )
+        }
+
+        let attributes = \(extensionName)Attributes(title: title)
+        let state = \(extensionName)Attributes.ContentState(
+          message: message,
+          progress: progress
+        )
+        let content = ActivityContent(state: state, staleDate: nil)
+
+        activity = try Activity.request(
+          attributes: attributes,
+          content: content,
+          pushType: nil
+        )
+      }
+
+      /// Update the current activity's state. No-op if no activity is
+      /// currently running.
+      func update(message: String, progress: Double) async {
+        guard let activity = activity else { return }
+        let state = \(extensionName)Attributes.ContentState(
+          message: message,
+          progress: progress
+        )
+        await activity.update(ActivityContent(state: state, staleDate: nil))
+      }
+
+      /// End the current activity. The final state is shown briefly before
+      /// the activity disappears; pass `dismissalPolicy: .immediate` to
+      /// dismiss it right away.
+      func end(
+        finalMessage: String = "Done",
+        finalProgress: Double = 1.0
+      ) async {
+        guard let activity = activity else { return }
+        let state = \(extensionName)Attributes.ContentState(
+          message: finalMessage,
+          progress: finalProgress
+        )
+        await activity.end(
+          ActivityContent(state: state, staleDate: nil),
+          dismissalPolicy: .default
+        )
+        self.activity = nil
+      }
+    }
+
+    // MARK: - Usage example
+    //
+    //     // Start an activity
+    //     try \(extensionName)ActivityController.shared.start(
+    //       title: "Scanning book",
+    //       message: "Finding cover…",
+    //       progress: 0.1
+    //     )
+    //
+    //     // Update as work progresses
+    //     await \(extensionName)ActivityController.shared.update(
+    //       message: "Fetching metadata",
+    //       progress: 0.5
+    //     )
+    //
+    //     // End when done
+    //     await \(extensionName)ActivityController.shared.end()
+
+    """
   }
 
   private static func generateWidgetCode(
@@ -5035,7 +5427,6 @@ public enum MCPTools {
   }
 
   private static func generateModelFromSchema(name: String, schema: [String: Any]) -> String {
-    let type = schema["type"] as? String ?? "object"
     let properties = schema["properties"] as? [String: Any] ?? [:]
     let required = schema["required"] as? [String] ?? []
 

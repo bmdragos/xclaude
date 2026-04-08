@@ -3,7 +3,14 @@ import Foundation
 // MARK: - Build Status
 
 public enum BuildStatus: String, Codable, Sendable {
+  /// The underlying `swift-bundler` process is still running.
   case running
+  /// `swift-bundler` exited successfully and xclaude is now running its own
+  /// post-processing (asset catalog compilation, extension embedding,
+  /// re-signing). Clients should treat this as "not done yet" — the `.app`
+  /// bundle exists on disk but is not yet complete.
+  case postProcessing = "post_processing"
+  /// Everything is done and the `.app` is ready to install/run.
   case success
   case failed
   case cancelled
@@ -29,7 +36,16 @@ public final class BuildJob: @unchecked Sendable {
   private var _exitCode: Int32?
   private var _endTime: Date?
   private var _appPath: String?
+  private var _postProcessError: String?
   private let maxBufferLines = 5000
+  private var _postProcessTask: Task<Void, Never>?
+
+  /// Optional post-processing closure, invoked after `swift-bundler` exits
+  /// successfully. While it runs, the job's status is `.postProcessing`. When
+  /// the closure returns, the status transitions to `.success`. If the
+  /// closure throws, `.failed` with the error recorded in `postProcessError`.
+  public typealias PostProcessHandler = @Sendable (BuildJob) async throws -> Void
+  private let postProcessHandler: PostProcessHandler?
 
   public var status: BuildStatus {
     lock.lock()
@@ -78,7 +94,8 @@ public final class BuildJob: @unchecked Sendable {
     platform: String,
     configuration: String,
     process: Process,
-    outputPipe: Pipe
+    outputPipe: Pipe,
+    postProcessHandler: PostProcessHandler? = nil
   ) {
     self.id = id
     self.projectPath = projectPath
@@ -87,6 +104,7 @@ public final class BuildJob: @unchecked Sendable {
     self.startTime = Date()
     self.process = process
     self.outputPipe = outputPipe
+    self.postProcessHandler = postProcessHandler
 
     // Set up async output reading
     outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -102,6 +120,12 @@ public final class BuildJob: @unchecked Sendable {
     process.terminationHandler = { [weak self] proc in
       self?.handleTermination(exitCode: proc.terminationStatus)
     }
+  }
+
+  public var postProcessError: String? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _postProcessError
   }
 
   private func appendOutput(_ text: String) {
@@ -121,14 +145,49 @@ public final class BuildJob: @unchecked Sendable {
 
   private func handleTermination(exitCode: Int32) {
     lock.lock()
-    defer { lock.unlock() }
 
     _exitCode = exitCode
-    _endTime = Date()
-    _status = exitCode == 0 ? .success : .failed
 
-    // Stop the readability handler
+    // Stop the readability handler — the child's stdout/stderr are closed.
     outputPipe.fileHandleForReading.readabilityHandler = nil
+
+    // Failed or no post-processing requested → transition directly to a
+    // terminal state.
+    guard exitCode == 0, let handler = postProcessHandler else {
+      _status = exitCode == 0 ? .success : .failed
+      _endTime = Date()
+      lock.unlock()
+      return
+    }
+
+    // swift-bundler exited successfully; run the post-process handler in a
+    // detached task and transition to .postProcessing. The job stays in
+    // .postProcessing until the handler returns, at which point
+    // finishPostProcessing() flips it to .success (or .failed on error).
+    _status = .postProcessing
+    lock.unlock()
+
+    _postProcessTask = Task { [weak self] in
+      guard let self = self else { return }
+      do {
+        try await handler(self)
+        self.finishPostProcessing(error: nil)
+      } catch {
+        self.finishPostProcessing(error: "\(error)")
+      }
+    }
+  }
+
+  private func finishPostProcessing(error: String?) {
+    lock.lock()
+    defer { lock.unlock() }
+    _endTime = Date()
+    if let error = error {
+      _postProcessError = error
+      _status = .failed
+    } else {
+      _status = .success
+    }
   }
 
   /// Read buffered output lines (non-blocking)
@@ -185,7 +244,8 @@ public actor BuildManager {
     platform: String,
     configuration: String,
     arguments: [String],
-    swiftBundlerPath: String
+    swiftBundlerPath: String,
+    postProcessHandler: BuildJob.PostProcessHandler? = nil
   ) throws -> BuildJob {
     let jobId = "build-\(nextJobId)"
     nextJobId += 1
@@ -206,7 +266,8 @@ public actor BuildManager {
       platform: platform,
       configuration: configuration,
       process: process,
-      outputPipe: outputPipe
+      outputPipe: outputPipe,
+      postProcessHandler: postProcessHandler
     )
 
     jobs[jobId] = job
@@ -270,6 +331,9 @@ public struct BuildJobInfo: Codable {
   public let duration: TimeInterval
   public let bufferedLines: Int
   public let appPath: String?
+  /// Non-nil only when `status == .failed` due to a post-processing error
+  /// (asset catalog compilation, extension embedding, or re-signing).
+  public let postProcessError: String?
 
   public init(from job: BuildJob) {
     self.id = job.id
@@ -283,5 +347,6 @@ public struct BuildJobInfo: Codable {
     self.duration = job.duration
     self.bufferedLines = job.bufferedLineCount
     self.appPath = job.appPath
+    self.postProcessError = job.postProcessError
   }
 }

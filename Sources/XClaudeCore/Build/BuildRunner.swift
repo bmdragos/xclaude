@@ -284,13 +284,16 @@ public struct BuildRunner {
         // each declared extension target, wrapping it as a .appex bundle,
         // dropping it into the parent app's PlugIns/ directory, and
         // re-signing. Swift-bundler knows nothing about extensions — this
-        // post-processing step is what makes them work.
+        // post-processing step is what makes them work. On device builds
+        // `resolvedSigning` is non-nil and each extension resolves its own
+        // provisioning profile; on simulator it falls back to ad-hoc.
         do {
           try await ExtensionEmbedder.embedExtensions(
             appPath: appPath,
             projectDirectory: projectDirectory,
             platform: platform,
-            configuration: configuration
+            configuration: configuration,
+            parentSigning: resolvedSigning
           )
         } catch {
           // Extension embedding failures should surface loudly — silent
@@ -520,14 +523,27 @@ public struct BuildRunner {
       }
     }
 
-    // Also search for any .xcassets in Sources directory
+    // Also search for any .xcassets in Sources directory. Use a manual
+    // recursive walk instead of FileManager.enumerator — the latter returns
+    // an NSEnumerator whose makeIterator() isn't Sendable, which trips a
+    // Swift 6 warning inside this async function.
     if assetCatalogPath == nil {
       let sourcesDir = projectDirectory.appendingPathComponent("Sources")
-      if let enumerator = FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil) {
-        for case let fileURL as URL in enumerator {
-          if fileURL.pathExtension == "xcassets" {
-            assetCatalogPath = fileURL
+      var stack: [URL] = [sourcesDir]
+      while let dir = stack.popLast(), assetCatalogPath == nil {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+          at: dir,
+          includingPropertiesForKeys: [.isDirectoryKey],
+          options: []
+        ) else { continue }
+        for entry in entries {
+          if entry.pathExtension == "xcassets" {
+            assetCatalogPath = entry
             break
+          }
+          let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+          if isDir {
+            stack.append(entry)
           }
         }
       }
@@ -571,7 +587,7 @@ public struct BuildRunner {
       "--output-partial-info-plist", tempInfoPlist.path
     ]
 
-    let (actoolExit, _, actoolErr) = try await runProcess(
+    let (actoolExit, _, _) = try await runProcess(
       "/usr/bin/xcrun",
       arguments: actoolArgs,
       currentDirectory: projectDirectory

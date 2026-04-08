@@ -333,6 +333,11 @@ public struct ConfigTranslator {
       at: baseDir, withIntermediateDirectories: true
     )
 
+    // Parse minimum iOS version from Package.swift once, reuse across all
+    // extensions. Falls back to "17.0" if Package.swift is missing or the
+    // platforms clause is unparseable.
+    let minimumOSVersion = parseMinimumIOSVersion(in: projectDirectory) ?? "17.0"
+
     var processed: [String] = []
     for (extName, extConfig) in extensions.sorted(by: { $0.key < $1.key }) {
       guard let manifest = ExtensionRegistry.manifest(forName: extConfig.type) else {
@@ -357,6 +362,7 @@ public struct ConfigTranslator {
         extensionName: extName,
         bundleId: bundleId,
         version: config.app.version,
+        minimumOSVersion: minimumOSVersion,
         manifest: manifest,
         spec: spec,
         userOverrides: extConfig.infoPlist
@@ -385,12 +391,76 @@ public struct ConfigTranslator {
     return processed
   }
 
+  /// Parse the minimum iOS version from a project's `Package.swift`.
+  /// Returns nil if the file is missing, unreadable, or has no iOS platform
+  /// declaration.
+  public static func parseMinimumIOSVersion(in projectDirectory: URL) -> String? {
+    let packagePath = projectDirectory.appendingPathComponent("Package.swift")
+    guard let content = try? String(contentsOf: packagePath, encoding: .utf8) else {
+      return nil
+    }
+    return parseMinimumIOSVersion(from: content)
+  }
+
+  /// Parse the minimum iOS version from `Package.swift` content.
+  ///
+  /// Handles the three forms SPM accepts for platform declarations:
+  /// - `.iOS(.v17)` → `"17.0"`
+  /// - `.iOS(.v16_1)` → `"16.1"` (important — Live Activities require 16.1+)
+  /// - `.iOS("17.0")` → `"17.0"`
+  ///
+  /// Returns nil if no iOS platform declaration is found.
+  public static func parseMinimumIOSVersion(from content: String) -> String? {
+    // Form 1: `.iOS(.vN)` or `.iOS(.vN_M)` — the most common style.
+    if let range = content.range(
+      of: #"\.iOS\(\.v(\d+)(?:_(\d+))?\)"#,
+      options: .regularExpression
+    ) {
+      let matched = String(content[range])
+      // Extract all integer tokens from the match (major + optional minor).
+      var numbers: [Int] = []
+      var searchStart = matched.startIndex
+      while let numRange = matched.range(
+        of: #"\d+"#,
+        options: .regularExpression,
+        range: searchStart..<matched.endIndex
+      ) {
+        if let n = Int(matched[numRange]) {
+          numbers.append(n)
+        }
+        searchStart = numRange.upperBound
+      }
+      if numbers.count == 1 {
+        return "\(numbers[0]).0"
+      } else if numbers.count >= 2 {
+        return "\(numbers[0]).\(numbers[1])"
+      }
+    }
+
+    // Form 2: `.iOS("17.0")` — string literal form.
+    if let range = content.range(
+      of: #"\.iOS\("(\d+\.\d+)"\)"#,
+      options: .regularExpression
+    ) {
+      let matched = String(content[range])
+      if let versionRange = matched.range(
+        of: #"\d+\.\d+"#,
+        options: .regularExpression
+      ) {
+        return String(matched[versionRange])
+      }
+    }
+
+    return nil
+  }
+
   /// Build the `Info.plist` contents for a single extension, as a dictionary
   /// ready for `PropertyListSerialization`.
   private static func buildExtensionInfoPlist(
     extensionName: String,
     bundleId: String,
     version: String,
+    minimumOSVersion: String,
     manifest: ExtensionManifest,
     spec: ExtensionPlatformSpec,
     userOverrides: [String: String]?
@@ -407,9 +477,7 @@ public struct ConfigTranslator {
       "CFBundlePackageType": "XPC!",
       "CFBundleShortVersionString": version,
       "CFBundleVersion": "1",
-      // TODO: derive MinimumOSVersion from Package.swift platforms; for now
-      // use iOS 17 which matches xclaude's default SwiftUI template.
-      "MinimumOSVersion": "17.0",
+      "MinimumOSVersion": minimumOSVersion,
     ]
 
     // NSExtension dict — extensionPointIdentifier is always required; the

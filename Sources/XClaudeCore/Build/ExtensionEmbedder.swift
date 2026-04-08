@@ -47,11 +47,17 @@ public enum ExtensionEmbedder {
   ///   - platform: Target platform — determines where `PlugIns/` lives and
   ///               how `xcodebuild` is invoked.
   ///   - configuration: Debug or release.
+  ///   - parentSigning: Resolved signing for the parent app. Non-nil for
+  ///               device builds, nil for simulator (which uses ad-hoc).
+  ///               Extensions reuse the parent's identity; each extension
+  ///               resolves its own provisioning profile separately from
+  ///               `SigningDiscovery` using its extension bundle ID.
   public static func embedExtensions(
     appPath: String,
     projectDirectory: URL,
     platform: BuildRunner.Platform,
-    configuration: BuildRunner.Configuration
+    configuration: BuildRunner.Configuration,
+    parentSigning: SigningDiscovery.ResolvedSigning? = nil
   ) async throws {
     // Fast path: no extensions declared.
     guard let config = try? XClaudeConfig.load(from: projectDirectory),
@@ -91,7 +97,9 @@ public enum ExtensionEmbedder {
         configuration: configuration
       )
 
-      // 2. Assemble the `.appex` bundle.
+      // 2. Assemble the `.appex` bundle. For device builds this is also
+      //    where the extension's provisioning profile gets embedded (via
+      //    the `extensionSigning` resolved below).
       let appexURL = plugInsURL.appendingPathComponent("\(extName).appex")
       try stageAppexBundle(
         extensionName: extName,
@@ -101,20 +109,80 @@ public enum ExtensionEmbedder {
         platform: platform
       )
 
-      // 3. Sign it.
+      // 3. For device builds, resolve the extension's own provisioning
+      //    profile (each extension bundle ID needs its own profile in
+      //    Apple Portal) and copy it into the .appex. For simulator builds
+      //    this is a no-op — simulator uses ad-hoc signing with no profile.
+      var extensionSigning: SigningDiscovery.ResolvedSigning? = nil
+      if platform.requiresSigning && parentSigning != nil {
+        let extBundleId =
+          extConfig.bundleId ?? "\(config.app.bundleId).\(extName)"
+        do {
+          let discovery = SigningDiscovery()
+          extensionSigning = try await discovery.resolveSigning(
+            bundleId: extBundleId,
+            platform: platform.platformName,
+            projectDirectory: projectDirectory,
+            config: config
+          )
+        } catch {
+          throw EmbedError(
+            "Failed to resolve signing for extension '\(extName)' with "
+              + "bundle ID '\(extBundleId)': \(error). Device builds require "
+              + "a provisioning profile for each extension's bundle ID. "
+              + "Create one via Apple Developer Portal or asc_create_profile."
+          )
+        }
+
+        // Copy the profile into the .appex. iOS extensions expect it at
+        // the top of the bundle; macOS extensions at Contents/.
+        if let signing = extensionSigning {
+          try embedProvisioningProfile(
+            from: URL(fileURLWithPath: signing.profile.path),
+            intoBundle: appexURL,
+            platform: platform
+          )
+        }
+      }
+
+      // 4. Sign it.
       try await signAppex(
         appexURL: appexURL,
         projectDirectory: projectDirectory,
         extensionName: extName,
         extConfig: extConfig,
-        platform: platform
+        platform: platform,
+        extensionSigning: extensionSigning
       )
     }
 
-    // Re-sign the parent .app. `--deep` covers the freshly-embedded .appex
-    // bundles; `--force` lets us overwrite swift-bundler's previous
-    // signature.
-    try await resignParentApp(appURL: appURL, platform: platform)
+    // Re-sign the parent .app to cover the freshly-embedded .appex bundles.
+    try await resignParentApp(
+      appURL: appURL,
+      platform: platform,
+      parentSigning: parentSigning
+    )
+  }
+
+  /// Copy a provisioning profile into an app or extension bundle as
+  /// `embedded.mobileprovision`. iOS-ish platforms place it at the bundle
+  /// root; macOS places it under `Contents/`.
+  private static func embedProvisioningProfile(
+    from profileURL: URL,
+    intoBundle bundleURL: URL,
+    platform: BuildRunner.Platform
+  ) throws {
+    let destRoot: URL
+    switch platform {
+    case .macOS:
+      destRoot = bundleURL.appendingPathComponent("Contents")
+    default:
+      destRoot = bundleURL
+    }
+    let dest = destRoot.appendingPathComponent("embedded.mobileprovision")
+    // Replace any existing profile.
+    try? FileManager.default.removeItem(at: dest)
+    try FileManager.default.copyItem(at: profileURL, to: dest)
   }
 
   // MARK: - PlugIns directory layout
@@ -299,23 +367,29 @@ public enum ExtensionEmbedder {
 
   // MARK: - Signing
 
-  /// Sign a staged `.appex` bundle. For simulator builds we use ad-hoc
-  /// signing (`--sign -`); device signing is a follow-up.
+  /// Sign a staged `.appex` bundle.
+  ///
+  /// - For simulator builds (`extensionSigning == nil`): ad-hoc signing
+  ///   with identity `-` and the derived entitlements file.
+  /// - For device builds (`extensionSigning != nil`): sign with the resolved
+  ///   identity from the keychain. The provisioning profile is already in
+  ///   the bundle (embedded by `embedProvisioningProfile`), and the
+  ///   entitlements file is the per-extension one from ConfigTranslator.
   static func signAppex(
     appexURL: URL,
     projectDirectory: URL,
     extensionName: String,
     extConfig: ExtensionConfig,
-    platform: BuildRunner.Platform
+    platform: BuildRunner.Platform,
+    extensionSigning: SigningDiscovery.ResolvedSigning? = nil
   ) async throws {
     let entitlementsPath = ConfigTranslator.extensionDerivedDirectory(
       for: projectDirectory,
       extensionName: extensionName
     ).appendingPathComponent("Entitlements.plist")
 
-    // Ad-hoc signing identity for simulator. Device signing would use the
-    // actual developer identity here and pass a provisioning profile.
-    let identity = "-"
+    // Pick the identity: resolved identity for device, ad-hoc for simulator.
+    let identity = extensionSigning?.identity.id ?? "-"
 
     var arguments: [String] = [
       "--force",
@@ -345,21 +419,40 @@ public enum ExtensionEmbedder {
   }
 
   /// Re-sign the parent `.app` so its signature covers the freshly-embedded
-  /// `.appex` bundles. `--deep` tells codesign to also verify/sign nested
-  /// bundles; `--force` lets us overwrite swift-bundler's previous signature.
+  /// `.appex` bundles.
+  ///
+  /// - Simulator (`parentSigning == nil`): `codesign --deep --sign -`. The
+  ///   `--deep` flag re-signs nested bundles with ad-hoc too, which is
+  ///   what we want since the .appex were already ad-hoc signed.
+  /// - Device (`parentSigning != nil`): sign the parent WITHOUT `--deep`
+  ///   so codesign seals the existing nested signatures by content hash
+  ///   rather than attempting to re-sign them (each .appex has its own
+  ///   entitlements and profile that the parent's identity alone can't
+  ///   produce via --deep).
   static func resignParentApp(
     appURL: URL,
-    platform: BuildRunner.Platform
+    platform: BuildRunner.Platform,
+    parentSigning: SigningDiscovery.ResolvedSigning? = nil
   ) async throws {
-    let identity = "-"  // Ad-hoc for simulator.
-
-    let arguments: [String] = [
+    var arguments: [String] = [
       "--force",
-      "--deep",
-      "--sign", identity,
       "--timestamp=none",
-      appURL.path,
     ]
+
+    if let signing = parentSigning {
+      // Device build: reuse the parent's identity and entitlements.
+      arguments.append(contentsOf: ["--sign", signing.identity.id])
+      arguments.append(contentsOf: ["--entitlements", signing.entitlementsPath])
+      // Explicitly NO --deep — nested .appex bundles are already signed
+      // with their own identities/profiles and we want codesign to just
+      // seal them by hash.
+    } else {
+      // Simulator build: ad-hoc --deep is fine.
+      arguments.append("--deep")
+      arguments.append(contentsOf: ["--sign", "-"])
+    }
+
+    arguments.append(appURL.path)
 
     let (exitCode, _, stderr) = try await runProcess(
       "/usr/bin/codesign",
@@ -380,11 +473,24 @@ public enum ExtensionEmbedder {
   /// Runs a subprocess and returns (exit code, stdout, stderr).
   ///
   /// Uses a continuation so the async runtime can service other work while
-  /// the subprocess runs. A naive `process.waitUntilExit()` would block the
-  /// calling thread — and because this is called from the MCP server's
-  /// async event loop, blocking here means `build_status` (and every other
-  /// MCP tool call) stops responding until the subprocess finishes. That
-  /// was the first thing to bite us when wiring up extension embedding.
+  /// the subprocess runs, and drains the child's stdout/stderr pipes
+  /// continuously via `readabilityHandler` so the child never blocks on a
+  /// full pipe buffer.
+  ///
+  /// Two hazards this function is careful about:
+  ///
+  /// 1. Blocking the async runtime — a naive `process.waitUntilExit()`
+  ///    would block the thread running the MCP server's event loop,
+  ///    which means `build_status` (and every other MCP tool call)
+  ///    stops responding until the subprocess finishes.
+  /// 2. Pipe buffer deadlock — the OS pipe buffer is only ~64KB. If we
+  ///    only read output AFTER the child exits, a chatty subprocess like
+  ///    `xcodebuild` fills the buffer, blocks trying to write more, and
+  ///    never exits. The termination handler then never fires and the
+  ///    continuation hangs forever. We avoid this by draining the pipes
+  ///    while the child is running via `readabilityHandler` and
+  ///    reassembling the accumulated data when the termination handler
+  ///    fires. Yes, this one bit us.
   private static func runProcess(
     _ executable: String,
     arguments: [String],
@@ -402,14 +508,47 @@ public enum ExtensionEmbedder {
       process.standardOutput = stdoutPipe
       process.standardError = stderrPipe
 
+      // Accumulator buffers for streaming pipe data. Wrapped in a lock
+      // because readabilityHandler callbacks fire on a background queue
+      // while the termination handler fires on another queue.
+      let bufferLock = NSLock()
+      nonisolated(unsafe) var stdoutData = Data()
+      nonisolated(unsafe) var stderrData = Data()
+
+      stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { return }
+        bufferLock.lock()
+        stdoutData.append(chunk)
+        bufferLock.unlock()
+      }
+
+      stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { return }
+        bufferLock.lock()
+        stderrData.append(chunk)
+        bufferLock.unlock()
+      }
+
       process.terminationHandler = { finishedProcess in
-        // Read output AFTER the process has exited — blocking reads on a
-        // running process's pipes can deadlock if the child fills its
-        // stdout/stderr buffer.
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Clear the readability handlers so no further chunks arrive after
+        // we've snapshotted the buffers. Also drain any final bytes that
+        // were waiting in the pipe but hadn't triggered a readability
+        // callback yet.
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        let finalStdout = stdoutPipe.fileHandleForReading.availableData
+        let finalStderr = stderrPipe.fileHandleForReading.availableData
+
+        bufferLock.lock()
+        if !finalStdout.isEmpty { stdoutData.append(finalStdout) }
+        if !finalStderr.isEmpty { stderrData.append(finalStderr) }
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        bufferLock.unlock()
+
         continuation.resume(
           returning: (finishedProcess.terminationStatus, stdout, stderr)
         )
