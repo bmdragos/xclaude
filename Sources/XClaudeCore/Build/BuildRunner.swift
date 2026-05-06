@@ -99,6 +99,18 @@ public struct BuildRunner {
   public enum Configuration: String {
     case debug
     case release
+
+    /// Map a build configuration to the signing mode it should use.
+    /// `debug` → `.development` (signing certs that allow debugging on
+    /// registered devices), `release` → `.distribution` (App Store / TestFlight
+    /// / Ad Hoc). This drives the `[signing.<platform>.development]` vs
+    /// `[signing.<platform>.distribution]` selection in `xclaude.toml`.
+    public var signingMode: SigningMode {
+      switch self {
+      case .debug: return .development
+      case .release: return .distribution
+      }
+    }
   }
 
   /// Build an app using swift-bundler
@@ -160,7 +172,8 @@ public struct BuildRunner {
           bundleId: bundleId,
           platform: platform.platformName,
           projectDirectory: projectDirectory,
-          config: config
+          config: config,
+          mode: configuration.signingMode
         )
       } catch {
         return BuildResult(

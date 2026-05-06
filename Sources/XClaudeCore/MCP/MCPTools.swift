@@ -1724,16 +1724,22 @@ public enum MCPTools {
     }
 
     // Resolve signing info if required (device builds).
+    // Map the job's configuration string back to a SigningMode so that
+    // post-processing (asset catalog re-sign, extension embedding) uses the
+    // same mode-aware [signing.iOS.development]/[signing.iOS.distribution]
+    // resolution as the initial build.
     var signing: SigningDiscovery.ResolvedSigning? = nil
     if platform.requiresSigning {
       let config = try? XClaudeConfig.load(from: projectURL)
       let bundleId = config?.app.bundleId ?? "com.example.app"
+      let signingMode = (BuildRunner.Configuration(rawValue: job.configuration) ?? .debug).signingMode
       let discovery = SigningDiscovery()
       signing = try? await discovery.resolveSigning(
         bundleId: bundleId,
         platform: platform.platformName,
         projectDirectory: projectURL,
-        config: config
+        config: config,
+        mode: signingMode
       )
     }
 
@@ -1824,17 +1830,21 @@ public enum MCPTools {
       args.append(configFile)
     }
 
-    // Resolve signing for device builds (xclaude projects only)
+    // Resolve signing for device builds (xclaude projects only).
+    // Use the build configuration to choose dev vs distribution signing —
+    // debug → [signing.iOS.development], release → [signing.iOS.distribution].
     if platform.requiresSigning && projectType == .xclaude {
       let config = try? XClaudeConfig.load(from: projectURL)
       let bundleId = config?.app.bundleId ?? "com.example.app"
+      let signingMode = (BuildRunner.Configuration(rawValue: configStr) ?? .debug).signingMode
 
       let discovery = SigningDiscovery()
       let signing = try await discovery.resolveSigning(
         bundleId: bundleId,
         platform: platform.platformName,
         projectDirectory: projectURL,
-        config: config
+        config: config,
+        mode: signingMode
       )
 
       args.append("--identity")
@@ -2105,17 +2115,21 @@ public enum MCPTools {
       args.append(configFile)
     }
 
-    // Resolve signing for device builds (xclaude projects only)
+    // Resolve signing for device builds (xclaude projects only).
+    // Same dev/distribution selection as buildStart — keyed off the
+    // build configuration string the user passed.
     if platform.requiresSigning && projectType == .xclaude {
       let config = try? XClaudeConfig.load(from: projectURL)
       let bundleId = config?.app.bundleId ?? "com.example.app"
+      let signingMode = (BuildRunner.Configuration(rawValue: configStr) ?? .debug).signingMode
 
       let discovery = SigningDiscovery()
       let signing = try await discovery.resolveSigning(
         bundleId: bundleId,
         platform: platform.platformName,
         projectDirectory: projectURL,
-        config: config
+        config: config,
+        mode: signingMode
       )
 
       args.append("--identity")

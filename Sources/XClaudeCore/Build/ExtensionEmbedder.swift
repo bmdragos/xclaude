@@ -113,6 +113,11 @@ public enum ExtensionEmbedder {
       //    profile (each extension bundle ID needs its own profile in
       //    Apple Portal) and copy it into the .appex. For simulator builds
       //    this is a no-op — simulator uses ad-hoc signing with no profile.
+      //
+      //    Inherit the parent app's signing mode: a debug parent build
+      //    must embed development extension profiles, a release parent
+      //    must embed distribution ones — otherwise the .app + .appex
+      //    pair has mismatched profile types and on-device install fails.
       var extensionSigning: SigningDiscovery.ResolvedSigning? = nil
       if platform.requiresSigning && parentSigning != nil {
         let extBundleId =
@@ -123,7 +128,8 @@ public enum ExtensionEmbedder {
             bundleId: extBundleId,
             platform: platform.platformName,
             projectDirectory: projectDirectory,
-            config: config
+            config: config,
+            mode: configuration.signingMode
           )
         } catch {
           throw EmbedError(

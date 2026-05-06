@@ -148,10 +148,16 @@ public enum ProfileType: String, Codable {
   case enterprise = "enterprise"
 }
 
-/// Provisioning profile
+/// Provisioning profile.
+///
+/// `name` is the profile's user-facing Name (e.g. "Lode Bike Development"),
+/// shown in Apple Developer Portal and unique per profile. `appIdName` is
+/// the App ID's display name (e.g. "Lode Bike"), shared between all profiles
+/// for the same bundle id — useful for grouping but never for selection.
 public struct ProvisioningProfile: Codable {
   public let uuid: String
   public let name: String
+  public let appIdName: String
   public let path: String
   public let teamId: String
   public let bundleIdPattern: String
@@ -162,12 +168,13 @@ public struct ProvisioningProfile: Codable {
   public let profileType: ProfileType
 
   public init(
-    uuid: String, name: String, path: String, teamId: String,
+    uuid: String, name: String, appIdName: String, path: String, teamId: String,
     bundleIdPattern: String, platforms: [String], expiresAt: Date,
     isWildcard: Bool, isExpired: Bool, profileType: ProfileType = .development
   ) {
     self.uuid = uuid
     self.name = name
+    self.appIdName = appIdName
     self.path = path
     self.teamId = teamId
     self.bundleIdPattern = bundleIdPattern
@@ -176,6 +183,24 @@ public struct ProvisioningProfile: Codable {
     self.isWildcard = isWildcard
     self.isExpired = isExpired
     self.profileType = profileType
+  }
+
+  // Custom decoder so caches written before `appIdName` was added still
+  // deserialize. Old caches expire in 5 minutes regardless, but this avoids
+  // a hard failure during the transition.
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    self.uuid = try c.decode(String.self, forKey: .uuid)
+    self.name = try c.decode(String.self, forKey: .name)
+    self.appIdName = try c.decodeIfPresent(String.self, forKey: .appIdName) ?? ""
+    self.path = try c.decode(String.self, forKey: .path)
+    self.teamId = try c.decode(String.self, forKey: .teamId)
+    self.bundleIdPattern = try c.decode(String.self, forKey: .bundleIdPattern)
+    self.platforms = try c.decode([String].self, forKey: .platforms)
+    self.expiresAt = try c.decode(Date.self, forKey: .expiresAt)
+    self.isWildcard = try c.decode(Bool.self, forKey: .isWildcard)
+    self.isExpired = try c.decode(Bool.self, forKey: .isExpired)
+    self.profileType = try c.decode(ProfileType.self, forKey: .profileType)
   }
 }
 
