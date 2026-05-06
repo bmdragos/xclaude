@@ -76,7 +76,17 @@ enum CodeSigner {
   ) async throws(Error) {
     log.info("Codesigning app bundle")
 
-    let librariesDirectory = bundle.appendingPathComponent("Libraries")
+    // Resolve the libraries directory per platform: macOS puts it at
+    // `Contents/Libraries` while iOS/tvOS/visionOS put it at the bundle
+    // root. The previous hardcoded `bundle/Libraries` only matched the
+    // iOS layout, so dylibs in macOS bundles were silently skipped by the
+    // explicit per-dylib signing pass and only got signed transitively
+    // via `codesign --deep`. `--deep` is deprecated; this lines up the
+    // explicit pass so dropping --deep later is a no-op.
+    let bundleStructure = DarwinAppBundleStructure(
+      at: bundle, platform: platform, appName: ""
+    )
+    let librariesDirectory = bundleStructure.librariesDirectory
     if librariesDirectory.exists(withType: .directory) {
       let contents = try Error.catch(withMessage: .failedToEnumerateDynamicLibraries) {
         try FileManager.default.contentsOfDirectory(
