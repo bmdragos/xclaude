@@ -19,8 +19,9 @@ public enum MCPServer {
       guard !line.isEmpty else { continue }
 
       do {
-        let response = try await handleRequest(line)
-        print(response)
+        if let response = try await handleRequest(line) {
+          print(response)
+        }
       } catch {
         let errorResponse = makeErrorResponse(id: nil, code: -32700, message: "Parse error: \(error)")
         print(errorResponse)
@@ -28,13 +29,18 @@ public enum MCPServer {
     }
   }
 
-  /// Handle a single JSON-RPC request
-  static func handleRequest(_ json: String) async throws -> String {
+  /// Handle a single JSON-RPC message. Returns nil for notifications (no response expected).
+  static func handleRequest(_ json: String) async throws -> String? {
     guard let data = json.data(using: .utf8) else {
       throw MCPError.invalidJSON
     }
 
     let request = try JSONDecoder().decode(JSONRPCRequest.self, from: data)
+
+    // Notifications (no id) must not receive a response per JSON-RPC 2.0.
+    if request.id == nil {
+      return nil
+    }
 
     switch request.method {
       case "initialize":
