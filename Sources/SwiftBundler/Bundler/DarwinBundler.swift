@@ -227,8 +227,17 @@ enum DarwinBundler: Bundler {
     }
   }
 
-  /// Signs the given app bundle if requested. If not required by the target
-  /// platform but not requested, then we sign with an adhoc signature.
+  /// Signs the given app bundle. Uses the supplied identity if a signing
+  /// context is provided, otherwise falls back to an ad-hoc signature.
+  ///
+  /// We ad-hoc sign on macOS too — the original code skipped macOS, but on
+  /// macOS 14+ (and especially Apple Silicon / macOS 26) the kernel refuses
+  /// to map `__TEXT` pages from a binary with no signature at all and
+  /// SIGKILLs the launch with "Code Signature Invalid" / Namespace
+  /// CODESIGNING / Code 2 / Invalid Page. The compiler's auto-applied
+  /// ad-hoc signature is invalidated as soon as we copy frameworks/dylibs
+  /// into the bundle, so we re-sign here with `codesign --force --deep`
+  /// to cover the main binary and every nested dylib/framework.
   private static func sign(
     appBundle: URL,
     context: BundlerContext,
@@ -244,17 +253,13 @@ enum DarwinBundler: Bundler {
           entitlements: codeSigningContext.entitlements
         )
       } else {
-        if context.platform != .macOS {
-          // Codesign using an adhoc signature if the target platform requires
-          // codesigning
-          try await CodeSigner.signAppBundle(
-            bundle: appBundle,
-            identityId: "-",
-            bundleIdentifier: context.appConfiguration.identifier,
-            platform: additionalContext.platform,
-            entitlements: nil
-          )
-        }
+        try await CodeSigner.signAppBundle(
+          bundle: appBundle,
+          identityId: "-",
+          bundleIdentifier: context.appConfiguration.identifier,
+          platform: additionalContext.platform,
+          entitlements: nil
+        )
       }
     }
   }
