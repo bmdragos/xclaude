@@ -38,7 +38,7 @@ MyApp/
     └── cache/            # Signing info
 ```
 
-## Status: v4.0.0 Released
+## Status: v4.0.2 Released
 
 **End-to-end working**: Build → Sign → Archive → Validate → Upload to TestFlight
 
