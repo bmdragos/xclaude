@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "4.0.2"
+  public static let version = "4.0.3"
 
   /// Tool definition
   struct Tool {
@@ -4628,7 +4628,7 @@ public enum MCPTools {
         config.infoPlist = [:]
       }
       for (key, value) in spec.parentAppInfoPlist where config.infoPlist?[key] == nil {
-        config.infoPlist?[key] = value
+        config.infoPlist?[key] = .string(value)
         parentPlistAdded[key] = value
       }
     }

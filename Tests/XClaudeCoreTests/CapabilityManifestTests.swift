@@ -316,7 +316,7 @@ struct CapabilityManagerTests {
     // Config on disk should reflect both sections.
     let config = try XClaudeConfig.load(from: dir)
     #expect(config.capabilities?["camera"] != nil)
-    #expect(config.infoPlist?["NSCameraUsageDescription"] == "For scanning QR codes")
+    #expect(config.infoPlist?["NSCameraUsageDescription"] == .string("For scanning QR codes"))
   }
 
   @Test("Adding healthkit on iOS succeeds")

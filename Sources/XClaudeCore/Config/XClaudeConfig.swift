@@ -6,14 +6,14 @@ public struct XClaudeConfig: Codable {
   public var app: AppConfig
   public var signing: SigningConfig?
   public var capabilities: [String: CapabilityValue]?  // Capability name -> value
-  public var infoPlist: [String: String]?  // Custom Info.plist entries
+  public var infoPlist: [String: PlistValue]?  // Custom Info.plist entries
   public var extensions: [String: ExtensionConfig]?  // Extension name -> config
 
   public init(
     app: AppConfig,
     signing: SigningConfig? = nil,
     capabilities: [String: CapabilityValue]? = nil,
-    infoPlist: [String: String]? = nil,
+    infoPlist: [String: PlistValue]? = nil,
     extensions: [String: ExtensionConfig]? = nil
   ) {
     self.app = app
@@ -40,7 +40,7 @@ public struct ExtensionConfig: Codable, Equatable, Sendable {
   public var bundleId: String?
 
   /// Extension-specific Info.plist overrides. Merged over the manifest defaults.
-  public var infoPlist: [String: String]?
+  public var infoPlist: [String: PlistValue]?
 
   /// Extension-specific capabilities. Keyed the same way as the top-level
   /// `[capabilities]` section. Used to generate a per-extension
@@ -54,7 +54,7 @@ public struct ExtensionConfig: Codable, Equatable, Sendable {
   public init(
     type: String,
     bundleId: String? = nil,
-    infoPlist: [String: String]? = nil,
+    infoPlist: [String: PlistValue]? = nil,
     capabilities: [String: CapabilityValue]? = nil,
     liveActivities: Bool? = nil
   ) {
@@ -110,7 +110,97 @@ public enum CapabilityValue: Codable, Equatable, Sendable {
   }
 }
 
+/// Info.plist value — what a single `[info_plist]` entry can hold.
+///
+/// Structurally identical to `CapabilityValue` today, but kept separate so
+/// the two domains can evolve independently (Info.plist may need integers
+/// or nested dicts; capability slots probably won't).
+public enum PlistValue: Codable, Equatable, Sendable {
+  case bool(Bool)
+  case string(String)
+  case array([String])
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let boolValue = try? container.decode(Bool.self) {
+      self = .bool(boolValue)
+    } else if let stringValue = try? container.decode(String.self) {
+      self = .string(stringValue)
+    } else if let arrayValue = try? container.decode([String].self) {
+      self = .array(arrayValue)
+    } else {
+      throw DecodingError.typeMismatch(PlistValue.self, DecodingError.Context(
+        codingPath: decoder.codingPath,
+        debugDescription: "Expected bool, string, or string array"
+      ))
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .bool(let value):
+      try container.encode(value)
+    case .string(let value):
+      try container.encode(value)
+    case .array(let value):
+      try container.encode(value)
+    }
+  }
+
+  /// Convert to Any for binary plist serialization.
+  public var anyValue: Any {
+    switch self {
+    case .bool(let v): return v
+    case .string(let v): return v
+    case .array(let v): return v
+    }
+  }
+
+  /// TOML literal used in xclaude.toml emission and Bundler.toml plist tables.
+  public var tomlLiteral: String {
+    switch self {
+    case .bool(let v):
+      return v ? "true" : "false"
+    case .string(let v):
+      let escaped = v.replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+      return "\"\(escaped)\""
+    case .array(let arr):
+      let items = arr.map { item -> String in
+        let escaped = item.replacingOccurrences(of: "\\", with: "\\\\")
+          .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+      }
+      return "[\(items.joined(separator: ", "))]"
+    }
+  }
+}
+
 extension XClaudeConfig {
+  /// Parse a TOML table representing a `[info_plist]` (or extension
+  /// `[extensions.<name>.info_plist]`) section into typed `PlistValue`
+  /// entries. Bools, strings, and string arrays are supported; anything
+  /// else is skipped silently (we don't yet support nested dicts or ints).
+  fileprivate static func parsePlistTable(
+    _ table: TOMLTable
+  ) -> [String: PlistValue] {
+    var entries: [String: PlistValue] = [:]
+    for (key, value) in table {
+      if let boolValue = value.bool {
+        entries[key] = .bool(boolValue)
+      } else if let strValue = value.string {
+        entries[key] = .string(strValue)
+      } else if let arrValue = value.array {
+        let strings = arrValue.compactMap { $0.string }
+        if !strings.isEmpty {
+          entries[key] = .array(strings)
+        }
+      }
+    }
+    return entries
+  }
+
   /// Load config from xclaude.toml in a directory
   public static func load(from directory: URL) throws -> XClaudeConfig {
     let configPath = directory.appendingPathComponent("xclaude.toml")
@@ -242,15 +332,12 @@ extension XClaudeConfig {
       }
     }
 
-    // Parse [info_plist] section (optional)
-    var infoPlist: [String: String]? = nil
+    // Parse [info_plist] section (optional). Supports bool, string, and
+    // string-array values — non-string types like NSBonjourServices need
+    // their native TOML representation rather than being coerced to strings.
+    var infoPlist: [String: PlistValue]? = nil
     if let infoPlistTable = table["info_plist"]?.table {
-      var entries: [String: String] = [:]
-      for (key, value) in infoPlistTable {
-        if let strValue = value.string {
-          entries[key] = strValue
-        }
-      }
+      let entries = parsePlistTable(infoPlistTable)
       if !entries.isEmpty {
         infoPlist = entries
       }
@@ -275,14 +362,9 @@ extension XClaudeConfig {
         let liveActivities = extTable["live_activities"]?.bool
 
         // Parse per-extension [extensions.<name>.info_plist]
-        var extInfoPlist: [String: String]? = nil
+        var extInfoPlist: [String: PlistValue]? = nil
         if let extPlistTable = extTable["info_plist"]?.table {
-          var entries: [String: String] = [:]
-          for (key, value) in extPlistTable {
-            if let strValue = value.string {
-              entries[key] = strValue
-            }
-          }
+          let entries = parsePlistTable(extPlistTable)
           if !entries.isEmpty {
             extInfoPlist = entries
           }
@@ -505,9 +587,7 @@ extension XClaudeConfig {
       lines.append("")
       lines.append("[info_plist]")
       for (key, value) in infoPlist.sorted(by: { $0.key < $1.key }) {
-        let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
-          .replacingOccurrences(of: "\"", with: "\\\"")
-        lines.append("\(key) = \"\(escapedValue)\"")
+        lines.append("\(key) = \(value.tomlLiteral)")
       }
     }
 
@@ -529,9 +609,7 @@ extension XClaudeConfig {
           lines.append("")
           lines.append("[extensions.\(extName).info_plist]")
           for (key, value) in extInfoPlist.sorted(by: { $0.key < $1.key }) {
-            let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
-              .replacingOccurrences(of: "\"", with: "\\\"")
-            lines.append("\(key) = \"\(escapedValue)\"")
+            lines.append("\(key) = \(value.tomlLiteral)")
           }
         }
 

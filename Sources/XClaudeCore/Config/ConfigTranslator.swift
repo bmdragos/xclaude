@@ -174,12 +174,13 @@ public struct ConfigTranslator {
     // Collect all plist entries
     var plistLines: [String] = []
 
-    // Add Info.plist entries from xclaude.toml [info_plist] section
+    // Add Info.plist entries from xclaude.toml [info_plist] section.
+    // Each entry's TOML literal is emitted as-is, so bool/string/array
+    // values (e.g. NSBonjourServices = ["_zeno._tcp"]) survive the
+    // round-trip into the bundler's [apps.<name>.plist] table.
     if let infoPlist = config.infoPlist, !infoPlist.isEmpty {
       for (key, value) in infoPlist.sorted(by: { $0.key < $1.key }) {
-        let escapedValue = value.replacingOccurrences(of: "\\", with: "\\\\")
-          .replacingOccurrences(of: "\"", with: "\\\"")
-        plistLines.append("\"\(key)\" = \"\(escapedValue)\"")
+        plistLines.append("\"\(key)\" = \(value.tomlLiteral)")
       }
     }
 
@@ -463,7 +464,7 @@ public struct ConfigTranslator {
     minimumOSVersion: String,
     manifest: ExtensionManifest,
     spec: ExtensionPlatformSpec,
-    userOverrides: [String: String]?
+    userOverrides: [String: PlistValue]?
   ) -> [String: Any] {
     // Standard bundle keys every app extension needs.
     var plist: [String: Any] = [
@@ -501,7 +502,7 @@ public struct ConfigTranslator {
     // User overrides from [extensions.<name>.info_plist] take final precedence.
     if let overrides = userOverrides {
       for (key, value) in overrides {
-        plist[key] = value
+        plist[key] = value.anyValue
       }
     }
 

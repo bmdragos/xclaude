@@ -167,7 +167,7 @@ struct XClaudeConfigExtensionsRoundTripTests {
     let config = try XClaudeConfig.load(from: dir)
     let ext = config.extensions?["CustomWidget"]
     #expect(ext?.bundleId == "com.example.testapp.custom")
-    #expect(ext?.infoPlist?["CustomKey"] == "CustomValue")
+    #expect(ext?.infoPlist?["CustomKey"] == .string("CustomValue"))
     #expect(ext?.capabilities?["push-notifications"] == .string("production"))
   }
 
@@ -344,7 +344,7 @@ struct ConfigTranslatorExtensionTests {
     let dir = try makeTempProject(with: [
       "MyWidget": ExtensionConfig(
         type: "widget",
-        infoPlist: ["CFBundleDisplayName": "CustomDisplayName"]
+        infoPlist: ["CFBundleDisplayName": .string("CustomDisplayName")]
       )
     ])
     defer { try? FileManager.default.removeItem(at: dir) }

@@ -246,7 +246,7 @@ public struct CapabilityManager {
       for (key, plistValue) in infoPlistUpdates {
         // Don't overwrite user's existing custom values.
         if config.infoPlist?[key] == nil {
-          config.infoPlist?[key] = plistValue
+          config.infoPlist?[key] = .string(plistValue)
         }
       }
     }
