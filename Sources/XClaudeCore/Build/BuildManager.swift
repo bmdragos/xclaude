@@ -27,7 +27,10 @@ public final class BuildJob: @unchecked Sendable {
   public let startTime: Date
 
   private let process: Process
-  private let outputPipe: Pipe
+  /// The reading end of whatever we wired to the child's stdout/stderr.
+  /// For iOS device builds this is a PTY master; for everything else a
+  /// `Pipe`'s reading end. Either way we only read from it.
+  private let outputHandle: FileHandle
   private let queue = DispatchQueue(label: "build.output")
   private let lock = NSLock()
 
@@ -94,7 +97,7 @@ public final class BuildJob: @unchecked Sendable {
     platform: String,
     configuration: String,
     process: Process,
-    outputPipe: Pipe,
+    outputHandle: FileHandle,
     postProcessHandler: PostProcessHandler? = nil
   ) {
     self.id = id
@@ -103,11 +106,11 @@ public final class BuildJob: @unchecked Sendable {
     self.configuration = configuration
     self.startTime = Date()
     self.process = process
-    self.outputPipe = outputPipe
+    self.outputHandle = outputHandle
     self.postProcessHandler = postProcessHandler
 
     // Set up async output reading
-    outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+    outputHandle.readabilityHandler = { [weak self] handle in
       let data = handle.availableData
       guard !data.isEmpty else { return }
 
@@ -149,7 +152,7 @@ public final class BuildJob: @unchecked Sendable {
     _exitCode = exitCode
 
     // Stop the readability handler — the child's stdout/stderr are closed.
-    outputPipe.fileHandleForReading.readabilityHandler = nil
+    outputHandle.readabilityHandler = nil
 
     // Failed or no post-processing requested → transition directly to a
     // terminal state.
@@ -251,26 +254,39 @@ public actor BuildManager {
     nextJobId += 1
 
     let process = Process()
-    // Wrap swift-bundler in `script -q /dev/null` so the child sees a PTY
-    // instead of a pipe on stdout. iOS device builds otherwise wedge
-    // *inside* xcodebuild: clang runs an initial `-v -E -dM` SDK probe whose
-    // output piles up in the clang→SWBBuildService pipe; the back-pressure
-    // propagates all the way out through xcbeautify and swift-bundler to the
-    // pipe we control, and clang blocks forever on a single `write()`
-    // syscall. A pseudo-TTY is what xcodebuild expects for interactive
-    // builds and avoids the whole back-pressure cascade. macOS's `script`
-    // takes care of allocating the PTY for us, and `-q /dev/null` keeps
-    // it from also writing a typescript file.
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-    process.arguments = ["-q", "/dev/null", swiftBundlerPath] + arguments
+    process.executableURL = URL(fileURLWithPath: swiftBundlerPath)
+    process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
 
-    // Capture both stdout and stderr. `script`'s stdout is the PTY master
-    // it allocated; reading it gets us everything swift-bundler (and its
-    // xcodebuild descendants) wrote to the slave PTY.
-    let outputPipe = Pipe()
-    process.standardOutput = outputPipe
-    process.standardError = outputPipe
+    // Allocate a pseudo-TTY for swift-bundler's stdout/stderr instead of a
+    // plain pipe. iOS device builds otherwise wedge *inside* xcodebuild:
+    // clang runs an initial `-v -E -dM` SDK macro probe whose ~50 KB of
+    // output piles up in the clang→SWBBuildService pipe; the back-pressure
+    // propagates all the way out through xcbeautify and swift-bundler to
+    // the pipe we control, and clang blocks forever on a single `write()`.
+    // A PTY is what xcodebuild expects for interactive builds and breaks
+    // the back-pressure cascade. iOS Simulator builds are unaffected (the
+    // main app goes through SwiftPM, not xcodebuild) but using a PTY for
+    // them too is harmless.
+    //
+    // We can't use macOS's `/usr/bin/script` wrapper for this — `script`
+    // needs ITS OWN stdin to be a TTY (it calls tcgetattr on it) and the
+    // MCP server's stdin is a pipe, so `script` bails with
+    // "Operation not supported on socket". `openpty` is simpler anyway.
+    var masterFD: Int32 = 0
+    var slaveFD: Int32 = 0
+    guard openpty(&masterFD, &slaveFD, nil, nil, nil) == 0 else {
+      throw BuildManagerError.failedToAllocatePTY(code: errno)
+    }
+    let masterHandle = FileHandle(fileDescriptor: masterFD, closeOnDealloc: true)
+    // The child needs its own dup of the slave fd; Process closes whatever
+    // FileHandle we hand it after exec. We DON'T set closeOnDealloc on this
+    // wrapper because we'll explicitly close `slaveFD` ourselves after
+    // `process.run()` returns — keeping the slave alive in the parent past
+    // that point would prevent us from ever seeing EOF on the master.
+    let slaveHandle = FileHandle(fileDescriptor: slaveFD, closeOnDealloc: false)
+    process.standardOutput = slaveHandle
+    process.standardError = slaveHandle
 
     let job = BuildJob(
       id: jobId,
@@ -278,13 +294,16 @@ public actor BuildManager {
       platform: platform,
       configuration: configuration,
       process: process,
-      outputPipe: outputPipe,
+      outputHandle: masterHandle,
       postProcessHandler: postProcessHandler
     )
 
     jobs[jobId] = job
 
     try process.run()
+    // Now that the child has its own copy of the slave fd, drop the parent's
+    // copy. Without this the master never reads EOF when the child exits.
+    close(slaveFD)
 
     return job
   }
@@ -326,6 +345,19 @@ public actor BuildManager {
     guard let job = jobs[id] else { return false }
     job.cancel()
     return true
+  }
+}
+
+// MARK: - Errors
+
+public enum BuildManagerError: Error, LocalizedError {
+  case failedToAllocatePTY(code: Int32)
+
+  public var errorDescription: String? {
+    switch self {
+    case .failedToAllocatePTY(let code):
+      return "openpty failed (errno=\(code))"
+    }
   }
 }
 
