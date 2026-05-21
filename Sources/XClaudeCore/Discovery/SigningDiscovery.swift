@@ -789,7 +789,27 @@ extension SigningDiscovery {
     let derivedDir = projectDirectory.appendingPathComponent(".xclaude/derived")
     try FileManager.default.createDirectory(at: derivedDir, withIntermediateDirectories: true)
 
-    let entitlementsPath = derivedDir.appendingPathComponent("Entitlements.plist")
+    // A single build runs `resolveSigning` multiple times — once for the
+    // parent app and once for each extension. If every call wrote to the
+    // same `Entitlements.plist`, the LAST writer won: the parent app's
+    // stored `entitlementsPath` kept pointing to the legacy filename, but
+    // the content underneath got overwritten with an extension's
+    // application-identifier. Device installs then failed with "A valid
+    // provisioning profile for this executable was not found".
+    //
+    // We give extensions their own filenames (`Entitlements-<bundle-id>.plist`)
+    // while keeping the parent app at the legacy `Entitlements.plist` path
+    // so macOS and archive code paths that hardcode the legacy filename
+    // still find what they expect.
+    let isParentApp = (config?.app.bundleId == bundleId)
+    let filename: String
+    if isParentApp || bundleId.isEmpty {
+      filename = "Entitlements.plist"
+    } else {
+      let safe = bundleId.replacingOccurrences(of: "/", with: "_")
+      filename = "Entitlements-\(safe).plist"
+    }
+    let entitlementsPath = derivedDir.appendingPathComponent(filename)
     let isMacOS = platform.lowercased().contains("macos")
 
     // Start fresh - don't merge with existing file
