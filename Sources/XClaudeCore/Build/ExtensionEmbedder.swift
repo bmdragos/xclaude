@@ -478,6 +478,36 @@ public enum ExtensionEmbedder {
       extensionName: extensionName
     ).appendingPathComponent("Entitlements.plist")
 
+    // For device builds the entitlements file's `application-identifier`
+    // must be the full `<teamId>.<bundleId>` form, matching the embedded
+    // provisioning profile. ConfigTranslator wrote just the bare bundle
+    // id (correct for simulator's ad-hoc signing, where any team prefix
+    // would be invented); inject the team prefix here now that signing
+    // is resolved. Same treatment for `keychain-access-groups` if it
+    // ever shows up.
+    if let signing = extensionSigning,
+       FileManager.default.fileExists(atPath: entitlementsPath.path) {
+      let data = try Data(contentsOf: entitlementsPath)
+      if var plist = try PropertyListSerialization.propertyList(
+        from: data, format: nil
+      ) as? [String: Any] {
+        let prefix = "\(signing.teamId)."
+        if let appId = plist["application-identifier"] as? String,
+           !appId.hasPrefix(prefix) {
+          plist["application-identifier"] = prefix + appId
+        }
+        if let groups = plist["keychain-access-groups"] as? [String] {
+          plist["keychain-access-groups"] = groups.map {
+            $0.hasPrefix(prefix) ? $0 : prefix + $0
+          }
+        }
+        let updated = try PropertyListSerialization.data(
+          fromPropertyList: plist, format: .xml, options: 0
+        )
+        try updated.write(to: entitlementsPath)
+      }
+    }
+
     // Pick the identity: resolved identity for device, ad-hoc for simulator.
     let identity = extensionSigning?.identity.id ?? "-"
 
