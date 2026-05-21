@@ -404,10 +404,16 @@ public actor AppStoreConnectClient {
 
   /// Find a bundle ID by identifier string
   public func findBundleId(identifier: String) async throws -> BundleIdListResponse.BundleIdData? {
+    // ASC's filter[identifier] is a PREFIX match, not an exact match: a query
+    // for "bd.touchkbd" returns "bd.touchkbd" AND "bd.touchkbd.touchkbdKeyboard"
+    // AND any other bd.touchkbd.* records. Picking `data.first` then binds
+    // dependent operations (e.g. asc_create_profile) to whichever record
+    // happens to be ordered first — usually the wrong one. Filter by exact
+    // string here so callers always get the record they asked for, or nil.
     let response: BundleIdListResponse = try await get("bundleIds", queryItems: [
       URLQueryItem(name: "filter[identifier]", value: identifier)
     ])
-    return response.data.first
+    return response.data.first { $0.attributes.identifier == identifier }
   }
 
   /// Create a new bundle ID
