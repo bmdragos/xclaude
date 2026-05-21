@@ -55,6 +55,7 @@ struct ExtensionTypeIdentifierTests {
     (.intents, "com.apple.intents-service"),
     (.notificationContent, "com.apple.usernotifications.content-extension"),
     (.notificationService, "com.apple.usernotifications.service"),
+    (.keyboard, "com.apple.keyboard-service"),
   ]
 
   @Test("Each type maps to its Apple extension point identifier", arguments: expected)
@@ -105,6 +106,49 @@ struct LiveActivitiesResolutionTests {
       #expect(
         spec.parentAppInfoPlist["NSSupportsLiveActivities"] == nil,
         "\(type.rawValue) should not set NSSupportsLiveActivities"
+      )
+    }
+  }
+}
+
+// MARK: - Keyboard NSExtensionAttributes
+
+@Suite("Keyboard extension NSExtensionAttributes")
+struct KeyboardExtensionTests {
+
+  @Test("Keyboard manifest declares the four required NSExtensionAttributes keys")
+  func keyboardDefaultAttributes() {
+    let manifest = ExtensionRegistry.manifest(for: .keyboard)!
+    let attrs = manifest.baseSpec.nsExtensionAttributes
+    #expect(attrs["IsASCIICapable"] == .bool(false))
+    #expect(attrs["PrefersRightToLeft"] == .bool(false))
+    #expect(attrs["PrimaryLanguage"] == .string("en-US"))
+    #expect(attrs["RequestsOpenAccess"] == .bool(false))
+  }
+
+  @Test("requests_open_access=true flips RequestsOpenAccess to true")
+  func requestsOpenAccessTrue() {
+    let manifest = ExtensionRegistry.manifest(for: .keyboard)!
+    let spec = manifest.resolvedSpec(requestsOpenAccess: true)
+    #expect(spec.nsExtensionAttributes["RequestsOpenAccess"] == .bool(true))
+  }
+
+  @Test("requests_open_access=false leaves RequestsOpenAccess false")
+  func requestsOpenAccessFalse() {
+    let manifest = ExtensionRegistry.manifest(for: .keyboard)!
+    let spec = manifest.resolvedSpec(requestsOpenAccess: false)
+    #expect(spec.nsExtensionAttributes["RequestsOpenAccess"] == .bool(false))
+  }
+
+  @Test("requests_open_access on non-keyboard extensions is ignored")
+  func requestsOpenAccessIgnoredForOtherTypes() {
+    for type in ExtensionType.allCases where type != .keyboard {
+      let manifest = ExtensionRegistry.manifest(for: type)!
+      let spec = manifest.resolvedSpec(requestsOpenAccess: true)
+      // Other types shouldn't suddenly grow a RequestsOpenAccess attribute.
+      #expect(
+        spec.nsExtensionAttributes["RequestsOpenAccess"] == nil,
+        "\(type.rawValue) should not set RequestsOpenAccess"
       )
     }
   }
@@ -306,7 +350,7 @@ struct ConfigTranslatorExtensionTests {
     #expect(nsExtension?["NSExtensionPointIdentifier"] as? String == "com.apple.share-services")
     #expect(
       nsExtension?["NSExtensionPrincipalClass"] as? String
-        == "$(PRODUCT_MODULE_NAME).ShareViewController"
+        == "MyShare.ShareViewController"
     )
   }
 
@@ -437,6 +481,78 @@ struct ConfigTranslatorExtensionTests {
       projectDirectory: dir
     )
     #expect(processed.isEmpty)
+  }
+
+  @Test("Keyboard extension Info.plist carries NSExtensionAttributes with defaults")
+  func keyboardInfoPlistDefaults() throws {
+    let dir = try makeTempProject(with: [
+      "MyKeyboard": ExtensionConfig(type: "keyboard")
+    ])
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let config = try XClaudeConfig.load(from: dir)
+    _ = try ConfigTranslator.generateExtensionDerivedFiles(
+      config: config,
+      projectDirectory: dir
+    )
+
+    let plistURL = ConfigTranslator.extensionDerivedDirectory(
+      for: dir,
+      extensionName: "MyKeyboard"
+    ).appendingPathComponent("Info.plist")
+
+    let data = try Data(contentsOf: plistURL)
+    let plist =
+      try PropertyListSerialization.propertyList(from: data, format: nil)
+      as! [String: Any]
+
+    let nsExtension = plist["NSExtension"] as? [String: Any]
+    #expect(
+      nsExtension?["NSExtensionPointIdentifier"] as? String
+        == "com.apple.keyboard-service"
+    )
+    #expect(
+      nsExtension?["NSExtensionPrincipalClass"] as? String
+        == "MyKeyboard.KeyboardViewController"
+    )
+
+    let attrs = nsExtension?["NSExtensionAttributes"] as? [String: Any]
+    #expect(attrs?["IsASCIICapable"] as? Bool == false)
+    #expect(attrs?["PrefersRightToLeft"] as? Bool == false)
+    #expect(attrs?["PrimaryLanguage"] as? String == "en-US")
+    #expect(attrs?["RequestsOpenAccess"] as? Bool == false)
+  }
+
+  @Test("Keyboard with requests_open_access=true flips RequestsOpenAccess in derived plist")
+  func keyboardInfoPlistOpenAccess() throws {
+    let dir = try makeTempProject(with: [
+      "MyKeyboard": ExtensionConfig(
+        type: "keyboard",
+        requestsOpenAccess: true
+      )
+    ])
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let config = try XClaudeConfig.load(from: dir)
+    _ = try ConfigTranslator.generateExtensionDerivedFiles(
+      config: config,
+      projectDirectory: dir
+    )
+
+    let plistURL = ConfigTranslator.extensionDerivedDirectory(
+      for: dir,
+      extensionName: "MyKeyboard"
+    ).appendingPathComponent("Info.plist")
+
+    let data = try Data(contentsOf: plistURL)
+    let plist =
+      try PropertyListSerialization.propertyList(from: data, format: nil)
+      as! [String: Any]
+
+    let attrs =
+      (plist["NSExtension"] as? [String: Any])?["NSExtensionAttributes"]
+      as? [String: Any]
+    #expect(attrs?["RequestsOpenAccess"] as? Bool == true)
   }
 }
 

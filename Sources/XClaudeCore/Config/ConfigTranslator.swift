@@ -323,7 +323,8 @@ public struct ConfigTranslator {
   @discardableResult
   public static func generateExtensionDerivedFiles(
     config: XClaudeConfig,
-    projectDirectory: URL
+    projectDirectory: URL,
+    adHocSimulator: Bool = false
   ) throws -> [String] {
     guard let extensions = config.extensions, !extensions.isEmpty else {
       return []
@@ -356,7 +357,10 @@ public struct ConfigTranslator {
       )
 
       let bundleId = extConfig.bundleId ?? "\(config.app.bundleId).\(extName)"
-      let spec = manifest.resolvedSpec(liveActivities: extConfig.liveActivities ?? false)
+      let spec = manifest.resolvedSpec(
+        liveActivities: extConfig.liveActivities ?? false,
+        requestsOpenAccess: extConfig.requestsOpenAccess
+      )
 
       // Info.plist
       let infoPlist = buildExtensionInfoPlist(
@@ -379,7 +383,8 @@ public struct ConfigTranslator {
         extConfig: extConfig,
         bundleId: bundleId,
         manifest: manifest,
-        spec: spec
+        spec: spec,
+        adHocSimulator: adHocSimulator
       )
       let entitlementsURL = extDir.appendingPathComponent("Entitlements.plist")
       let entitlementsData = try PropertyListSerialization.data(
@@ -487,9 +492,23 @@ public struct ConfigTranslator {
       "NSExtensionPointIdentifier": manifest.type.extensionPointIdentifier
     ]
     if let principalClass = manifest.type.principalClass {
-      // $(PRODUCT_MODULE_NAME) gets substituted by codesign/runtime to the
-      // extension target's module name.
-      nsExtension["NSExtensionPrincipalClass"] = "$(PRODUCT_MODULE_NAME).\(principalClass)"
+      // Fully-qualify with the Swift module name. Xcode-generated plists
+      // use `$(PRODUCT_MODULE_NAME).<Class>` because Xcode preprocesses
+      // build-setting variables before writing; we don't have that
+      // preprocessor, so we have to write the resolved module name here.
+      // For SwiftPM, the module name equals the target name, which equals
+      // the extension name in xclaude's layout.
+      nsExtension["NSExtensionPrincipalClass"] = "\(extensionName).\(principalClass)"
+    }
+    // Manifest-declared NSExtensionAttributes (e.g. keyboard's IsASCIICapable
+    // / PrimaryLanguage / RequestsOpenAccess). Nested under NSExtension so
+    // the on-disk Info.plist matches what Xcode would emit.
+    if !spec.nsExtensionAttributes.isEmpty {
+      var attrs: [String: Any] = [:]
+      for (key, value) in spec.nsExtensionAttributes {
+        attrs[key] = value.anyValue
+      }
+      nsExtension["NSExtensionAttributes"] = attrs
     }
     plist["NSExtension"] = nsExtension
 
@@ -500,6 +519,10 @@ public struct ConfigTranslator {
     }
 
     // User overrides from [extensions.<name>.info_plist] take final precedence.
+    // (Today PlistValue is bool/string/array only — nested dicts aren't
+    // representable, so a user can't partially override NSExtension. The
+    // typed knobs on ExtensionConfig — liveActivities, requestsOpenAccess —
+    // are the supported way to tune NSExtension contents.)
     if let overrides = userOverrides {
       for (key, value) in overrides {
         plist[key] = value.anyValue
@@ -518,15 +541,22 @@ public struct ConfigTranslator {
     extConfig: ExtensionConfig,
     bundleId: String,
     manifest: ExtensionManifest,
-    spec: ExtensionPlatformSpec
+    spec: ExtensionPlatformSpec,
+    adHocSimulator: Bool = false
   ) -> [String: Any] {
     var entitlements: [String: Any] = [:]
 
     // Baseline keys every signed extension needs.
-    // `application-identifier` is normally TEAM_ID.bundle_id but on simulator
-    // (ad-hoc signing) we write just the bundle id; codesign doesn't require
-    // the team prefix for ad-hoc signed extensions.
-    entitlements["application-identifier"] = bundleId
+    // `application-identifier` is normally TEAM_ID.bundle_id. On the iOS
+    // simulator, including it makes pkd refuse to spawn the .appex with
+    // NSPOSIXErrorDomain 163 ("Launchd job spawn failed"), since ad-hoc
+    // signing can't legitimately stamp any team-prefixed identifier into
+    // the signature — so we omit it entirely for simulator builds.
+    // Device builds still need it; the team prefix is resolved by codesign
+    // from the signing identity.
+    if !adHocSimulator {
+      entitlements["application-identifier"] = bundleId
+    }
 
     // Manifest-declared entitlements for this extension type.
     for (key, value) in spec.entitlements {

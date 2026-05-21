@@ -80,6 +80,19 @@ public struct BuildRunner {
       }
     }
 
+    /// Whether this platform runs in a simulator. Used to decide when to
+    /// emit ad-hoc entitlements (simulator builds skip provisioning profiles
+    /// but still need codesign to embed entitlements for capabilities like
+    /// App Groups and keychain).
+    public var isSimulator: Bool {
+      switch self {
+      case .iOSSimulator, .tvOSSimulator, .visionOSSimulator:
+        return true
+      case .iOS, .tvOS, .visionOS, .macOS:
+        return false
+      }
+    }
+
     /// Platform name for profile matching (matches provisioning profile platform field)
     public var platformName: String {
       switch self {

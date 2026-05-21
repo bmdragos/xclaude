@@ -68,10 +68,13 @@ public enum ExtensionEmbedder {
 
     // Regenerate per-extension derived files so we always sign against
     // fresh plist/entitlements content, even if xclaude.toml changed since
-    // the last build.
+    // the last build. For simulator builds, omit application-identifier
+    // from the extension's Entitlements.plist (pkd refuses to spawn ad-hoc
+    // .appex bundles that carry one).
     try ConfigTranslator.generateExtensionDerivedFiles(
       config: config,
-      projectDirectory: projectDirectory
+      projectDirectory: projectDirectory,
+      adHocSimulator: parentSigning == nil && platform.isSimulator
     )
 
     let appURL = URL(fileURLWithPath: appPath)
@@ -163,11 +166,92 @@ public enum ExtensionEmbedder {
     }
 
     // Re-sign the parent .app to cover the freshly-embedded .appex bundles.
+    // For simulator builds (no resolved signing) we also emit an ad-hoc
+    // Entitlements.plist from xclaude.toml's [capabilities] so the parent
+    // can read the App Group container that the extension wrote to.
+    // Without this, swift-bundler's ad-hoc signing pass leaves the parent
+    // with zero entitlements and `containerURL(forSecurityApplicationGroupIdentifier:)`
+    // returns nil at runtime.
+    let parentSimulatorEntitlements: URL? = {
+      guard parentSigning == nil, platform.isSimulator else { return nil }
+      return try? writeAdHocParentEntitlements(
+        config: config,
+        projectDirectory: projectDirectory
+      )
+    }()
+
     try await resignParentApp(
       appURL: appURL,
       platform: platform,
-      parentSigning: parentSigning
+      parentSigning: parentSigning,
+      adHocEntitlementsPath: parentSimulatorEntitlements
     )
+  }
+
+  /// Build an ad-hoc Entitlements.plist for the parent app, derived from
+  /// xclaude.toml's `[capabilities]` section. Used for iOS Simulator builds
+  /// (and other ad-hoc targets) so the parent app still gets App Group,
+  /// keychain, and other capabilities even without a provisioning profile.
+  ///
+  /// Returns the path to the written file, or nil if nothing was emitted
+  /// (no capabilities → nothing useful to sign).
+  private static func writeAdHocParentEntitlements(
+    config: XClaudeConfig,
+    projectDirectory: URL
+  ) throws -> URL? {
+    guard let capabilities = config.capabilities, !capabilities.isEmpty else {
+      return nil
+    }
+
+    // Deliberately NO `application-identifier` here. On simulator that key
+    // is validated against the signature's identity, and ad-hoc signing
+    // can't produce a real team-prefixed identifier — including it makes
+    // launchd reject the binary with the unhelpful NSPOSIXErrorDomain
+    // code 163 ("Launchd job spawn failed"). App Group access works fine
+    // without it; `com.apple.security.application-groups` alone is what
+    // grants `containerURL(forSecurityApplicationGroupIdentifier:)`.
+    //
+    // `get-task-allow` is also intentionally omitted — once
+    // `application-identifier` is gone, simulator launchd doesn't require
+    // it and adding it just makes codesign warn about a stray flag on an
+    // ad-hoc signature.
+    var entitlements: [String: Any] = [:]
+
+    // Resolve each capability the same way per-extension entitlements do.
+    // Simulator builds are iOS-only, so we use the .iOS platform spec.
+    var addedCapabilityKeys = false
+    for (capName, capValue) in capabilities {
+      guard let manifest = CapabilityRegistry.manifest(for: capName) else {
+        continue
+      }
+      let resolved = manifest.resolvedEntitlements(
+        for: .iOS,
+        userValue: capValue
+      )
+      for (key, value) in resolved {
+        entitlements[key] = value
+        addedCapabilityKeys = true
+      }
+    }
+
+    // No capability mapped to an iOS entitlement (e.g. only iOS-Info.plist-
+    // only capabilities like `camera` were declared) — skip emission so we
+    // don't add an entitlements file with nothing real in it.
+    guard addedCapabilityKeys else { return nil }
+
+    let derivedDir = ConfigTranslator.derivedDirectory(for: projectDirectory)
+    try FileManager.default.createDirectory(
+      at: derivedDir,
+      withIntermediateDirectories: true
+    )
+    let path = derivedDir.appendingPathComponent("Entitlements.plist")
+    let data = try PropertyListSerialization.data(
+      fromPropertyList: entitlements,
+      format: .xml,
+      options: 0
+    )
+    try data.write(to: path)
+    return path
   }
 
   /// Copy a provisioning profile into an app or extension bundle as
@@ -438,7 +522,8 @@ public enum ExtensionEmbedder {
   static func resignParentApp(
     appURL: URL,
     platform: BuildRunner.Platform,
-    parentSigning: SigningDiscovery.ResolvedSigning? = nil
+    parentSigning: SigningDiscovery.ResolvedSigning? = nil,
+    adHocEntitlementsPath: URL? = nil
   ) async throws {
     var arguments: [String] = [
       "--force",
@@ -453,9 +538,22 @@ public enum ExtensionEmbedder {
       // with their own identities/profiles and we want codesign to just
       // seal them by hash.
     } else {
-      // Simulator build: ad-hoc --deep is fine.
-      arguments.append("--deep")
+      // Simulator build: ad-hoc. If the project declares capabilities, the
+      // caller pre-built an ad-hoc Entitlements.plist; embed it so the
+      // parent app actually gets App Group / keychain / etc. access at
+      // runtime. Without it, swift-bundler's earlier ad-hoc sign left the
+      // parent with zero entitlements and capability APIs return nil.
+      // No --deep here either when we have an entitlements file: --deep
+      // re-signs nested .appex bundles with the SAME entitlements, which
+      // would clobber the extension's per-target entitlements. With nothing
+      // to embed --deep is harmless and we keep it for back-compat with
+      // simulator builds that don't declare any capabilities.
       arguments.append(contentsOf: ["--sign", "-"])
+      if let entitlements = adHocEntitlementsPath {
+        arguments.append(contentsOf: ["--entitlements", entitlements.path])
+      } else {
+        arguments.append("--deep")
+      }
     }
 
     arguments.append(appURL.path)

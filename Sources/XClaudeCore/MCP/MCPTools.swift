@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "4.0.3"
+  public static let version = "4.1.0"
 
   /// Tool definition
   struct Tool {
@@ -688,7 +688,7 @@ public enum MCPTools {
             "description": "Extension type",
             "enum": [
               "widget", "share", "action", "intents",
-              "notification-content", "notification-service",
+              "notification-content", "notification-service", "keyboard",
             ]
           ],
           "name": [
@@ -704,6 +704,11 @@ public enum MCPTools {
             "type": "boolean",
             "description":
               "Widgets only. If true, adds NSSupportsLiveActivities=YES to the parent app's Info.plist, enabling ActivityKit Live Activities / Dynamic Island."
+          ],
+          "requests_open_access": [
+            "type": "boolean",
+            "description":
+              "Keyboards only. If true, sets NSExtensionAttributes.RequestsOpenAccess=YES in the extension's Info.plist. Needed for network access, full UITextChecker, or keychain reads. App Group sharing does NOT require this."
           ],
           "path": [
             "type": "string",
@@ -4543,6 +4548,7 @@ public enum MCPTools {
       case .intents: return "\(appName)Intents"
       case .notificationContent: return "\(appName)NotificationContent"
       case .notificationService: return "\(appName)NotificationService"
+      case .keyboard: return "\(appName)Keyboard"
       }
     }()
 
@@ -4555,6 +4561,15 @@ public enum MCPTools {
       guard let flag = arguments["live_activities"] as? Bool else { return nil }
       if extensionType != .widget {
         // Flag is meaningless for non-widget types; ignore silently.
+        return nil
+      }
+      return flag
+    }()
+
+    // Requests-open-access flag (keyboards only).
+    let requestsOpenAccess: Bool? = {
+      guard let flag = arguments["requests_open_access"] as? Bool else { return nil }
+      if extensionType != .keyboard {
         return nil
       }
       return flag
@@ -4597,6 +4612,10 @@ public enum MCPTools {
       sourceFile = extensionDir.appendingPathComponent("IntentHandler.swift")
       try generateIntentsCode(extensionName: extensionName)
         .write(to: sourceFile, atomically: true, encoding: .utf8)
+    case .keyboard:
+      sourceFile = extensionDir.appendingPathComponent("KeyboardViewController.swift")
+      try generateKeyboardExtensionCode(extensionName: extensionName)
+        .write(to: sourceFile, atomically: true, encoding: .utf8)
     case .action, .notificationContent, .notificationService:
       sourceFile = extensionDir.appendingPathComponent("\(extensionName).swift")
       try generateGenericExtensionCode(
@@ -4612,7 +4631,8 @@ public enum MCPTools {
       bundleId: customBundleId,
       infoPlist: nil,
       capabilities: nil,
-      liveActivities: liveActivities
+      liveActivities: liveActivities,
+      requestsOpenAccess: requestsOpenAccess
     )
     if config.extensions == nil {
       config.extensions = [:]
@@ -5234,6 +5254,44 @@ public enum MCPTools {
       override func handler(for intent: INIntent) -> Any {
         // Return the handler for the specific intent
         return self
+      }
+    }
+    """
+  }
+
+  private static func generateKeyboardExtensionCode(extensionName: String) -> String {
+    return """
+    import UIKit
+
+    /// Custom keyboard entry point. iOS instantiates this class by name
+    /// (matching NSExtensionPrincipalClass in Info.plist) — there is no
+    /// `@main`, the system loads us via NSExtensionMain at the Mach-O level.
+    class KeyboardViewController: UIInputViewController {
+      private var nextKeyboardButton: UIButton!
+
+      override func updateViewConstraints() {
+        super.updateViewConstraints()
+        // Adjust per-orientation layout here if needed.
+      }
+
+      override func viewDidLoad() {
+        super.viewDidLoad()
+
+        // Every custom keyboard MUST give the user a way to switch back to
+        // another keyboard, otherwise they're trapped. iOS hides this
+        // requirement behind `advanceToNextInputMode()`.
+        nextKeyboardButton = UIButton(type: .system)
+        nextKeyboardButton.setTitle("Next Keyboard", for: [])
+        nextKeyboardButton.sizeToFit()
+        nextKeyboardButton.translatesAutoresizingMaskIntoConstraints = false
+        nextKeyboardButton.addTarget(
+          self,
+          action: #selector(handleInputModeList(from:with:)),
+          for: .allTouchEvents
+        )
+        view.addSubview(nextKeyboardButton)
+        nextKeyboardButton.leftAnchor.constraint(equalTo: view.leftAnchor).isActive = true
+        nextKeyboardButton.bottomAnchor.constraint(equalTo: view.bottomAnchor).isActive = true
       }
     }
     """

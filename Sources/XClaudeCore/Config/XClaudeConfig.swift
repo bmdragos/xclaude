@@ -51,18 +51,29 @@ public struct ExtensionConfig: Codable, Equatable, Sendable {
   /// to the PARENT app's Info.plist, enabling ActivityKit.
   public var liveActivities: Bool?
 
+  /// Keyboard extensions only: if true, set `RequestsOpenAccess = YES` in
+  /// the extension's `NSExtension` → `NSExtensionAttributes` dict. Required
+  /// for any keyboard that needs network access, full UITextChecker, or to
+  /// read/write the user's full keychain. App Group access does NOT require
+  /// this — leave it false unless you specifically need one of the gated
+  /// capabilities, since enabling it forces the user through an extra Settings
+  /// toggle ("Allow Full Access") before the keyboard works at all.
+  public var requestsOpenAccess: Bool?
+
   public init(
     type: String,
     bundleId: String? = nil,
     infoPlist: [String: PlistValue]? = nil,
     capabilities: [String: CapabilityValue]? = nil,
-    liveActivities: Bool? = nil
+    liveActivities: Bool? = nil,
+    requestsOpenAccess: Bool? = nil
   ) {
     self.type = type
     self.bundleId = bundleId
     self.infoPlist = infoPlist
     self.capabilities = capabilities
     self.liveActivities = liveActivities
+    self.requestsOpenAccess = requestsOpenAccess
   }
 }
 
@@ -360,6 +371,7 @@ extension XClaudeConfig {
         }
         let extBundleId = extTable["bundle_id"]?.string
         let liveActivities = extTable["live_activities"]?.bool
+        let requestsOpenAccess = extTable["requests_open_access"]?.bool
 
         // Parse per-extension [extensions.<name>.info_plist]
         var extInfoPlist: [String: PlistValue]? = nil
@@ -396,7 +408,8 @@ extension XClaudeConfig {
           bundleId: extBundleId,
           infoPlist: extInfoPlist,
           capabilities: extCapabilities,
-          liveActivities: liveActivities
+          liveActivities: liveActivities,
+          requestsOpenAccess: requestsOpenAccess
         )
       }
       if !exts.isEmpty {
@@ -602,6 +615,9 @@ extension XClaudeConfig {
         }
         if let liveActivities = extConfig.liveActivities {
           lines.append("live_activities = \(liveActivities)")
+        }
+        if let requestsOpenAccess = extConfig.requestsOpenAccess {
+          lines.append("requests_open_access = \(requestsOpenAccess)")
         }
 
         // Per-extension [info_plist] overrides
