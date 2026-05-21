@@ -125,34 +125,21 @@ public struct SigningDiscovery {
     return nil
   }
 
-  /// Run a command with stdin input
+  /// Run a command with stdin input. See `runCommand` for the rationale
+  /// behind the continuation + readabilityHandler pattern.
   private func runCommandWithInput(
     _ command: String,
     arguments: [String],
-    input: String
+    input: String,
+    timeoutSeconds: Int = 30
   ) async throws -> String {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: command)
-    process.arguments = arguments
-
-    let stdinPipe = Pipe()
-    let stdoutPipe = Pipe()
-    process.standardInput = stdinPipe
-    process.standardOutput = stdoutPipe
-    process.standardError = FileHandle.nullDevice
-
-    try process.run()
-
-    // Write input to stdin
-    if let inputData = input.data(using: .utf8) {
-      stdinPipe.fileHandleForWriting.write(inputData)
-      stdinPipe.fileHandleForWriting.closeFile()
-    }
-
-    process.waitUntilExit()
-
-    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    return String(data: data, encoding: .utf8) ?? ""
+    try await Self.runProcessAsync(
+      command,
+      arguments: arguments,
+      stdinInput: input,
+      mergeStderrIntoStdout: false,
+      timeoutSeconds: timeoutSeconds
+    )
   }
 
   /// Discover provisioning profiles
@@ -300,25 +287,146 @@ public struct SigningDiscovery {
       .appendingPathComponent("Provisioning Profiles")
   }
 
+  /// Run a subprocess and return stdout. Two hazards this implementation
+  /// is careful about — both inherited verbatim from the comment block on
+  /// `ExtensionEmbedder.runProcess`, where they bit us first:
+  ///
+  /// 1. **Blocking the async executor.** `process.waitUntilExit()` is
+  ///    synchronous; calling it from a Swift async context blocks the
+  ///    underlying executor thread. The MCP server runs every tool call
+  ///    on the same executor, so a single signing-discovery call can
+  ///    wedge every concurrent `get_signing_status` / `get_config` /
+  ///    `build_start` invocation until the subprocess returns. We use
+  ///    `withCheckedThrowingContinuation` + `terminationHandler` so the
+  ///    executor stays free.
+  /// 2. **Pipe buffer deadlock.** OS pipes are ~64 KB; if we only read
+  ///    stdout after `waitUntilExit`, a chatty subprocess fills the
+  ///    buffer, blocks on write, and never exits — `waitUntilExit` then
+  ///    blocks forever. `readabilityHandler` drains the pipe as data
+  ///    arrives so the child can always make progress.
+  ///
+  /// Plus a hard timeout: keychain commands can stall indefinitely on a
+  /// pending UI access prompt (the security agent dialog never reaches
+  /// the MCP process and we'd hang silently). Defaults to 30 s, which
+  /// is long enough for legitimate `security find-certificate` work on
+  /// keychains with hundreds of entries but short enough to surface as
+  /// an error before the user gives up and kills the MCP.
   private func runCommand(
     _ command: String,
     arguments: [String],
-    captureStderr: Bool = true
+    captureStderr: Bool = true,
+    timeoutSeconds: Int = 30
   ) async throws -> String {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: command)
-    process.arguments = arguments
+    try await Self.runProcessAsync(
+      command,
+      arguments: arguments,
+      stdinInput: nil,
+      mergeStderrIntoStdout: captureStderr,
+      timeoutSeconds: timeoutSeconds
+    )
+  }
 
-    let stdoutPipe = Pipe()
-    let stderrPipe = Pipe()
-    process.standardOutput = stdoutPipe
-    process.standardError = captureStderr ? stdoutPipe : stderrPipe
+  /// Shared async-safe subprocess driver used by `runCommand` and
+  /// `runCommandWithInput`. Returns the stdout (optionally with stderr
+  /// merged in) as a UTF-8 string. Throws `DiscoveryError.subprocessTimeout`
+  /// if the process doesn't exit within `timeoutSeconds`.
+  fileprivate static func runProcessAsync(
+    _ command: String,
+    arguments: [String],
+    stdinInput: String?,
+    mergeStderrIntoStdout: Bool,
+    timeoutSeconds: Int
+  ) async throws -> String {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<String, Error>) in
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: command)
+      process.arguments = arguments
 
-    try process.run()
-    process.waitUntilExit()
+      let stdoutPipe = Pipe()
+      let stderrPipe = mergeStderrIntoStdout ? stdoutPipe : Pipe()
+      let stdinPipe: Pipe? = stdinInput != nil ? Pipe() : nil
 
-    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    return String(data: data, encoding: .utf8) ?? ""
+      process.standardOutput = stdoutPipe
+      process.standardError = mergeStderrIntoStdout
+        ? stdoutPipe
+        : FileHandle.nullDevice
+      if let stdinPipe { process.standardInput = stdinPipe }
+
+      // Pipe accumulators. The readability + termination callbacks fire on
+      // separate dispatch queues so the buffer needs a lock. `resumed` is
+      // used to ensure we only call the continuation once — the timeout
+      // path and the normal-exit path race.
+      let bufferLock = NSLock()
+      nonisolated(unsafe) var stdoutData = Data()
+      nonisolated(unsafe) var resumed = false
+
+      @Sendable func resumeOnce(_ result: Result<String, Error>) {
+        bufferLock.lock()
+        let already = resumed
+        resumed = true
+        bufferLock.unlock()
+        guard !already else { return }
+        switch result {
+        case .success(let s): continuation.resume(returning: s)
+        case .failure(let e): continuation.resume(throwing: e)
+        }
+      }
+
+      stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+        let chunk = handle.availableData
+        guard !chunk.isEmpty else { return }
+        bufferLock.lock()
+        stdoutData.append(chunk)
+        bufferLock.unlock()
+      }
+
+      process.terminationHandler = { _ in
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        let finalChunk = stdoutPipe.fileHandleForReading.availableData
+        bufferLock.lock()
+        if !finalChunk.isEmpty { stdoutData.append(finalChunk) }
+        let str = String(data: stdoutData, encoding: .utf8) ?? ""
+        bufferLock.unlock()
+        resumeOnce(.success(str))
+      }
+
+      // Timeout race. If the subprocess doesn't exit in time we terminate
+      // it (which triggers the termination handler — but resumeOnce will
+      // ignore the late success path) and throw a typed error.
+      DispatchQueue.global().asyncAfter(
+        deadline: .now() + .seconds(timeoutSeconds)
+      ) {
+        bufferLock.lock()
+        let already = resumed
+        bufferLock.unlock()
+        guard !already else { return }
+        if process.isRunning {
+          process.terminate()
+        }
+        resumeOnce(.failure(DiscoveryError.subprocessTimeout(
+          command: command,
+          seconds: timeoutSeconds
+        )))
+      }
+
+      do {
+        try process.run()
+        // Feed stdin AFTER the process is running. `write` is synchronous
+        // but the buffer is large enough for the inputs we use (PEM certs
+        // ≈ 2 KB, well under 64 KB).
+        if let stdinPipe, let input = stdinInput {
+          if let data = input.data(using: .utf8) {
+            stdinPipe.fileHandleForWriting.write(data)
+          }
+          stdinPipe.fileHandleForWriting.closeFile()
+        }
+        // Silence the unused warning for stderrPipe when separate.
+        _ = stderrPipe
+      } catch {
+        resumeOnce(.failure(error))
+      }
+    }
   }
 }
 
@@ -344,6 +452,7 @@ enum DiscoveryError: Error, LocalizedError {
   case invalidProfile(String)
   case noMatchingProfile(String)
   case noMatchingIdentity(String)
+  case subprocessTimeout(command: String, seconds: Int)
 
   var errorDescription: String? {
     switch self {
@@ -351,6 +460,10 @@ enum DiscoveryError: Error, LocalizedError {
     case .invalidProfile(let s): return "Invalid provisioning profile: \(s)"
     case .noMatchingProfile(let s): return "No matching provisioning profile: \(s)"
     case .noMatchingIdentity(let s): return "No matching signing identity: \(s)"
+    case .subprocessTimeout(let cmd, let secs):
+      return "Subprocess \(cmd) did not return within \(secs)s — likely a "
+        + "blocked keychain access prompt or a locked keychain. Check the "
+        + "system keychain UI for a pending dialog."
     }
   }
 }
