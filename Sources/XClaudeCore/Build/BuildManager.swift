@@ -251,11 +251,23 @@ public actor BuildManager {
     nextJobId += 1
 
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: swiftBundlerPath)
-    process.arguments = arguments
+    // Wrap swift-bundler in `script -q /dev/null` so the child sees a PTY
+    // instead of a pipe on stdout. iOS device builds otherwise wedge
+    // *inside* xcodebuild: clang runs an initial `-v -E -dM` SDK probe whose
+    // output piles up in the clang→SWBBuildService pipe; the back-pressure
+    // propagates all the way out through xcbeautify and swift-bundler to the
+    // pipe we control, and clang blocks forever on a single `write()`
+    // syscall. A pseudo-TTY is what xcodebuild expects for interactive
+    // builds and avoids the whole back-pressure cascade. macOS's `script`
+    // takes care of allocating the PTY for us, and `-q /dev/null` keeps
+    // it from also writing a typescript file.
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+    process.arguments = ["-q", "/dev/null", swiftBundlerPath] + arguments
     process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
 
-    // Capture both stdout and stderr
+    // Capture both stdout and stderr. `script`'s stdout is the PTY master
+    // it allocated; reading it gets us everything swift-bundler (and its
+    // xcodebuild descendants) wrote to the slave PTY.
     let outputPipe = Pipe()
     process.standardOutput = outputPipe
     process.standardError = outputPipe

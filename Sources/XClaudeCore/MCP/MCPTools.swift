@@ -12,7 +12,7 @@ public enum MCPTools {
   private static let processStartTime: Date = Date()
 
   /// xclaude version
-  public static let version = "4.1.2"
+  public static let version = "4.1.3"
 
   /// Tool definition
   struct Tool {
